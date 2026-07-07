@@ -1,0 +1,55 @@
+{
+	"name": "ds_pipeline_config",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_ADLS_Petiot",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "Json",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobFSLocation",
+				"fileName": "pipeline_config.json",
+				"folderPath": "config",
+				"fileSystem": "raw"
+			}
+		},
+		"schema": {
+			"type": "object",
+			"properties": {
+				"table_name": {
+					"type": "string"
+				},
+				"table_type": {
+					"type": "string"
+				},
+				"primary_key": {
+					"type": "null"
+				},
+				"watermark_column": {
+					"type": "string"
+				},
+				"is_incremental": {
+					"type": "boolean"
+				},
+				"partition_column": {
+					"type": "string"
+				},
+				"target_layer": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"gold_domain": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

@@ -1,0 +1,20 @@
+{
+	"name": "LS_Databricks_PetIoT",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureDatabricks",
+		"typeProperties": {
+			"domain": "https://adb-7405607363756765.5.azuredatabricks.net",
+			"accessToken": {
+				"type": "AzureKeyVaultSecret",
+				"store": {
+					"referenceName": "ls_AzureKeyVault_Petiot",
+					"type": "LinkedServiceReference"
+				},
+				"secretName": "databricks-pat-token"
+			},
+			"existingClusterId": "0615-053826-gnnnbag2"
+		}
+	}
+}

@@ -1,0 +1,146 @@
+{
+	"name": "PL_Ingest_Raw_To_Bronze",
+	"properties": {
+		"description": "Load raw .json.gz → Bronze Delta tables\tTumbling Window (daily)",
+		"activities": [
+			{
+				"name": "LKP_Get_Table_Metadata",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "JsonSource",
+						"storeSettings": {
+							"type": "AzureBlobFSReadSettings",
+							"recursive": true,
+							"enablePartitionDiscovery": false
+						},
+						"formatSettings": {
+							"type": "JsonReadSettings"
+						}
+					},
+					"dataset": {
+						"referenceName": "ds_pipeline_config",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": false
+				}
+			},
+			{
+				"name": "FE_Loop_Through_Tables",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "LKP_Get_Table_Metadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('LKP_Get_Table_Metadata').output.value",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "NB_Execute_Raw_To_Bronze",
+							"type": "DatabricksNotebook",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/Shared/pet-analytics/bronze/nb_raw_to_bronze",
+								"baseParameters": {
+									"p_table_name": {
+										"value": "@item().table_name",
+										"type": "Expression"
+									},
+									"p_table_type": {
+										"value": "@item().table_type",
+										"type": "Expression"
+									},
+									"p_window_start": {
+										"value": "@pipeline().parameters.window_start_time",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "LS_Databricks_PetIoT",
+								"type": "LinkedServiceReference"
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"p_layer": {
+				"type": "string",
+				"defaultValue": "bronze"
+			},
+			"p_table_name": {
+				"type": "string",
+				"defaultValue": "device_snapshots"
+			},
+			"p_load_date": {
+				"type": "string",
+				"defaultValue": "@if(empty(pipeline().parameters.window_start_time), formatDateTime(utcNow(), 'yyyy-MM-dd'), formatDateTime(pipeline().parameters.window_start_time, 'yyyy-MM-dd'))"
+			},
+			"p_storage_account": {
+				"type": "string",
+				"defaultValue": "petiot"
+			},
+			"p_container_raw": {
+				"type": "string",
+				"defaultValue": "raw"
+			},
+			"p_container_bronze": {
+				"type": "string",
+				"defaultValue": "bronze"
+			},
+			"p_container_silver": {
+				"type": "string",
+				"defaultValue": "silver"
+			},
+			"p_container_gold": {
+				"type": "string",
+				"defaultValue": "gold"
+			},
+			"p_is_incremental": {
+				"type": "bool",
+				"defaultValue": true
+			},
+			"p_watermark_column": {
+				"type": "string",
+				"defaultValue": "snapshot_timestamp"
+			},
+			"window_start_time": {
+				"type": "string"
+			},
+			"window_end_time": {
+				"type": "string",
+				"defaultValue": "@if(empty(pipeline().parameters.window_start_time), '', coalesce(trigger()?.outputs?.windowEndTime, ''))"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-06-30T09:59:17Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

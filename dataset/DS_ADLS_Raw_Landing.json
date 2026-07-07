@@ -1,0 +1,59 @@
+{
+	"name": "DS_ADLS_Raw_Landing",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_ADLS_Petiot",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"container_name": {
+				"type": "string"
+			},
+			"directory_path": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "Json",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobFSLocation",
+				"folderPath": {
+					"value": "@dataset().directory_path",
+					"type": "Expression"
+				},
+				"fileSystem": {
+					"value": "@dataset().container_name",
+					"type": "Expression"
+				}
+			}
+		},
+		"schema": {
+			"type": "object",
+			"properties": {
+				"activity_snapshot_id": {
+					"type": "string"
+				},
+				"snapshot_timestamp": {
+					"type": "string"
+				},
+				"device_id": {
+					"type": "string"
+				},
+				"pet_id": {
+					"type": "string"
+				},
+				"steps": {
+					"type": "string"
+				},
+				"distance_km": {
+					"type": "string"
+				},
+				"active_minutes": {
+					"type": "string"
+				}
+			}
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

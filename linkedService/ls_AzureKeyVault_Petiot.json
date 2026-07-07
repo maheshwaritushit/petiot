@@ -1,0 +1,11 @@
+{
+	"name": "ls_AzureKeyVault_Petiot",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureKeyVault",
+		"typeProperties": {
+			"baseUrl": "https://kv-petiot-secrets.vault.azure.net/"
+		}
+	}
+}

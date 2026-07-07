@@ -1,0 +1,75 @@
+{
+	"name": "PL_Silver_To_Gold",
+	"properties": {
+		"activities": [
+			{
+				"name": "NB_Silver_To_Gold_Pet_Owners",
+				"type": "DatabricksNotebook",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Shared/pet-analytics/gold/nb_silver_to_gold_pet_owners"
+				},
+				"linkedServiceName": {
+					"referenceName": "LS_Databricks_PetIoT",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "NB_Silver_To_Gold_Manufacturers",
+				"type": "DatabricksNotebook",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Shared/pet-analytics/gold/nb_silver_to_gold_manufacturers"
+				},
+				"linkedServiceName": {
+					"referenceName": "LS_Databricks_PetIoT",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "NB_Silver_To_Gold_Sales",
+				"type": "DatabricksNotebook",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Shared/pet-analytics/gold/nb_silver_to_gold_sales"
+				},
+				"linkedServiceName": {
+					"referenceName": "LS_Databricks_PetIoT",
+					"type": "LinkedServiceReference"
+				}
+			}
+		],
+		"parameters": {
+			"window_start_time": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-06-30T09:59:17Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

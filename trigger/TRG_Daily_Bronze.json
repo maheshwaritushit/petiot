@@ -1,0 +1,20 @@
+{
+	"name": "TRG_Daily_Bronze",
+	"properties": {
+		"annotations": [],
+		"runtimeState": "Stopped",
+		"type": "TumblingWindowTrigger",
+		"typeProperties": {
+			"frequency": "Hour",
+			"interval": 24,
+			"startTime": "2021-01-01T08:22:00Z",
+			"delay": "00:00:00",
+			"maxConcurrency": 1,
+			"retryPolicy": {
+				"count": 3,
+				"intervalInSeconds": 300
+			},
+			"dependsOn": []
+		}
+	}
+}

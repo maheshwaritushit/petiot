@@ -1,0 +1,23 @@
+{
+	"name": "ls_ADLS_Petiot",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"annotations": [],
+		"type": "AzureBlobFS",
+		"typeProperties": {
+			"url": "https://petiot.dfs.core.windows.net/",
+			"azureCloudType": "AzurePublic",
+			"tenant": "07866b23-c0f4-4b72-b15b-85faef24491a",
+			"servicePrincipalId": "04cfd9dd-1607-497d-b20a-f091da9b9dd9",
+			"servicePrincipalCredentialType": "ServicePrincipalKey",
+			"servicePrincipalCredential": {
+				"type": "AzureKeyVaultSecret",
+				"store": {
+					"referenceName": "ls_AzureKeyVault_Petiot",
+					"type": "LinkedServiceReference"
+				},
+				"secretName": "client-secret"
+			}
+		}
+	}
+}

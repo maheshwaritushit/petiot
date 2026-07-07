@@ -1,0 +1,96 @@
+{
+	"name": "PL_Master_MDR_Orchestrator",
+	"properties": {
+		"activities": [
+			{
+				"name": "EP_Run_Raw_To_Bronze",
+				"type": "ExecutePipeline",
+				"dependsOn": [],
+				"policy": {
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"pipeline": {
+						"referenceName": "PL_Ingest_Raw_To_Bronze",
+						"type": "PipelineReference"
+					},
+					"waitOnCompletion": true,
+					"parameters": {
+						"window_start_time": {
+							"value": "@pipeline().parameters.window_start_time",
+							"type": "Expression"
+						}
+					}
+				}
+			},
+			{
+				"name": "EP_Run_Bronze_To_Silver",
+				"type": "ExecutePipeline",
+				"dependsOn": [
+					{
+						"activity": "EP_Run_Raw_To_Bronze",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"pipeline": {
+						"referenceName": "PL_Bronze_To_Silver",
+						"type": "PipelineReference"
+					},
+					"waitOnCompletion": true,
+					"parameters": {
+						"window_start_time": {
+							"value": "@pipeline().parameters.window_start_time",
+							"type": "Expression"
+						}
+					}
+				}
+			},
+			{
+				"name": "EP_Run_Silver_To_Gold",
+				"type": "ExecutePipeline",
+				"dependsOn": [
+					{
+						"activity": "EP_Run_Bronze_To_Silver",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"pipeline": {
+						"referenceName": "PL_Silver_To_Gold",
+						"type": "PipelineReference"
+					},
+					"waitOnCompletion": true,
+					"parameters": {
+						"window_start_time": {
+							"value": "@pipeline().parameters.window_start_time",
+							"type": "Expression"
+						}
+					}
+				}
+			}
+		],
+		"parameters": {
+			"window_start_time": {
+				"type": "string",
+				"defaultValue": "2025-01-01T00:00:00Z"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-06-30T08:32:21Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

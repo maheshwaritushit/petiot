@@ -1,0 +1,15 @@
+{
+	"name": "pet-iot-dev-adf",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "66ccaf47-6950-4ca4-a9b7-18f79f1bb433",
+		"tenantId": "07866b23-c0f4-4b72-b15b-85faef24491a"
+	}
+}

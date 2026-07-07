@@ -1,0 +1,101 @@
+{
+	"name": "PL_Bronze_To_Silver",
+	"properties": {
+		"activities": [
+			{
+				"name": "LKP_Get_Table_Metadata",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "JsonSource",
+						"storeSettings": {
+							"type": "AzureBlobFSReadSettings",
+							"recursive": true,
+							"enablePartitionDiscovery": false
+						},
+						"formatSettings": {
+							"type": "JsonReadSettings"
+						}
+					},
+					"dataset": {
+						"referenceName": "ds_pipeline_config",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": false
+				}
+			},
+			{
+				"name": "FE_Loop_Through_Tables",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "LKP_Get_Table_Metadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('LKP_Get_Table_Metadata').output.value",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "NB_Execute_Bronze_To_Silver",
+							"type": "DatabricksNotebook",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"notebookPath": "/Shared/pet-analytics/silver/nb_bronze_to_silver",
+								"baseParameters": {
+									"table_name": {
+										"value": "@item().table_name",
+										"type": "Expression"
+									},
+									"load_date": {
+										"value": "@if(\n    empty(pipeline().parameters.window_start_time),\n    formatDateTime(utcnow(), 'yyyy-MM-dd'),\n    formatDateTime(pipeline().parameters.window_start_time, 'yyyy-MM-dd')\n)",
+										"type": "Expression"
+									},
+									"table_type": {
+										"value": "@item().table_type",
+										"type": "Expression"
+									}
+								}
+							},
+							"linkedServiceName": {
+								"referenceName": "LS_Databricks_PetIoT",
+								"type": "LinkedServiceReference"
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"window_start_time": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-06-30T09:59:17Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}
