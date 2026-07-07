@@ -1,0 +1,1924 @@
+
+PET IoT ANALYTICS PLATFORM
+Proof of Concept
+End-to-End Data Engineering Pipeline on Microsoft Azure
+
+Azure Data Factory  ·  ADLS Gen2  ·  Azure Databricks  ·  Delta Lake
+Unity Catalog  ·  Auto Loader  ·  Medallion Architecture  ·  Power BI
+
+Author	Role	Date	Version
+Tushit Maheshwari	Data Engineer	July 1, 2026	1.0
+
+Azure Subscription	Databricks Workspace	ADF Instance	Storage Account
+Tushit-Dev	petiot-dbx-dev	pet-iot-dev-adf	petiot (ADLS Gen2)
+
+ 
+  For my databricks notebooks zip folder: [ https://nagarro-my.sharepoint.com/:u:/p/tushit_maheshwari/IQAsxW_XhpdQToYLkOLxWE_aASuy-3Flj_GzszPNEEwEB3Q?e=poSJ0l ]	 
+
+
+Table of Contents
+
+1. Executive Summary
+2. Project Overview & Business Context
+2.1 Problem Statement
+2.2 Proposed Solution
+2.3 Business Objectives
+2.4 Stakeholder Dashboards
+3. Architecture Overview
+3.1 Medallion Architecture
+3.2 Technology Stack
+3.3 End-to-End Data Flow
+3.4 Azure Resource Inventory
+4. Synthetic Data Generation
+4.1 Why Synthetic Data
+4.2 Python Generator Scripts
+4.3 Data Generation Strategy
+4.4 Anomaly Injection Framework
+4.5 Local Folder Structure
+5. Data Model — Star Schema
+5.1 Schema Design Decisions
+5.2 Dimension Tables (6 tables)
+5.2.1 owners
+5.2.2 pets
+5.2.3 products
+5.2.4 firmware
+5.2.5 batches
+5.2.6 devices
+5.3 Fact Tables (8 tables)
+5.3.1 sales
+5.3.2 device_snapshots
+5.3.3 activity_snapshots
+5.3.4 health_snapshots
+5.3.5 feeding_events
+5.3.6 hydration_events
+5.3.7 device_failures
+5.3.8 firmware_deployments
+5.4 Referential Integrity Chain
+5.5 Device Category to Fact Table Mapping
+6. Azure Infrastructure Setup
+6.1 Resource Group & Storage Account
+6.2 ADLS Gen2 Container Structure
+6.3 Azure Databricks Workspace
+6.4 Azure Data Factory
+6.5 Azure Key Vault & Secret Scope
+6.6 Service Principal & OAuth Configuration
+7. Unity Catalog
+7.1 Why Unity Catalog over Hive Metastore
+7.2 Metastore Setup
+7.3 Catalog and Schema Creation
+7.4 Registering Gold Tables
+7.5 External Location (optional)
+7.6 Access Control
+8. Raw Data Upload & Partitioning
+8.1 Upload Strategy
+8.2 Day-Partitioned Structure
+8.3 nb_partition_raw_fact_tables Notebook
+9. Azure Data Factory Pipeline Design
+9.1 Pipeline Architecture Overview
+9.2 table_list.json Lookup Config
+9.3 PL_Master_MDR_Orchestrator
+9.4 PL_Ingest_Raw_To_Bronze
+9.5 PL_Bronze_To_Silver
+9.6 PL_Silver_To_Gold
+9.7 ADF Parameters & Expressions
+9.8 Tumbling Window Trigger
+9.9 Linked Services
+9.10 ADF Monitoring
+10. Bronze Layer Notebooks
+10.1 Design Philosophy
+10.2 set_auth_context
+10.3 schema_manager
+10.4 autoloader
+10.5 lineage
+10.6 writer
+10.7 nb_raw_to_bronze (Orchestrator)
+11. Silver Layer Notebooks
+11.1 Design Philosophy
+11.2 silver_reader
+11.3 cleaner
+11.4 silver_writer
+11.5 nb_bronze_to_silver (Orchestrator)
+12. Gold Layer Notebooks
+12.1 Design Philosophy & Staged Join Strategy
+12.2 gold_reader
+12.3 aggregator
+12.4 gold_writer
+12.5 nb_silver_to_gold_pet_owners (Orchestrator)
+12.6 nb_silver_to_gold_manufacturers (Orchestrator)
+12.7 nb_silver_to_gold_sales (Orchestrator)
+13. Audit Framework
+13.1 Audit Design
+13.2 audit_manager
+13.3 dq_profiler
+13.4 audit_writer
+13.5 nb_audit_query
+13.6 Audit Delta Tables
+14. Power BI Dashboards
+14.1 Connection to Unity Catalog
+14.2 DAX Measures
+14.3 Page 1: Manufacturer Device Quality
+14.4 Page 2: Sales Overview
+14.5 Page 3: Pet Health
+14.6 Page 4: Daily Pet Detail
+14.7 Publishing & Scheduled Refresh
+15. Delta Lake Management
+15.1 OPTIMIZE & ZORDER
+15.2 VACUUM
+15.3 Time Travel
+15.4 Schema Evolution
+16. Incremental Load Strategy
+16.1 Watermark Pattern
+16.2 Auto Loader Checkpoint
+16.3 Tumbling Window Backfill
+17. Troubleshooting & Issue Resolution
+17.1 Cluster Driver Crashes
+17.2 External Location Errors
+17.3 Schema Mismatch Errors
+17.4 Parameter Chain Issues
+17.5 Unity Catalog Access Errors
+18. Results & Verification
+18.1 Bronze Verification
+18.2 Silver Verification
+18.3 Gold Verification
+18.4 Dashboard Verification
+19. Conclusions & Learnings
+Appendix A: Full Table Schemas
+Appendix B: Key Azure Resource Reference
+Appendix C: ADF Expression Cheat Sheet
+ 1. Executive Summary
+This document presents a complete Proof of Concept for the Pet IoT Analytics Platform — an end-to-end cloud data engineering pipeline built on Microsoft Azure. The project demonstrates the full lifecycle of IoT data from synthetic generation through ingestion, transformation, governance, and analytical consumption by three distinct business audiences.
+
+The platform ingests data from 10,000 simulated IoT pet devices owned by 5,000 pet owners across 10 countries. Device data covers GPS tracking, health monitoring, smart feeding, hydration monitoring, firmware deployments, and device failures. The pipeline processes this data through a Medallion Architecture (Raw → Bronze → Silver → Gold) using Azure Data Factory for orchestration, Azure Databricks with PySpark for processing, Delta Lake for ACID-compliant storage, Unity Catalog for governance, and Power BI for dashboard delivery.
+
+Metric	Value
+Total tables	14 (6 dimension + 8 fact)
+Total devices	10,000
+Total pet owners	5,000
+Total pets	10,000
+IoT device categories	6
+Databricks notebooks	20 (modular, separated by concern)
+ADF pipelines	4 (1 master orchestrator + 3 child pipelines)
+Gold tables	3 (one per dashboard audience)
+Power BI dashboard pages	4
+Audit Delta tables	3
+Historical backfill range	2021-01-01 to present
+ 2. Project Overview & Business Context
+2.1 Problem Statement
+A pet technology company manufactures and sells IoT devices for pets including GPS collars, health monitors, smart feeders, water fountains, pet cameras, and automated litter systems. The company collects continuous telemetry from 10,000 active devices but has no unified data platform to answer key business questions:
+•	Are devices from specific factories failing more than others?
+•	Is firmware update success rate declining across device generations?
+•	Which pets are showing abnormal health patterns over time?
+•	Which sales channels generate the highest net revenue?
+•	Are smart feeder devices dispensing correct food portions consistently?
+
+2.2 Proposed Solution
+Build a cloud-native data platform on Microsoft Azure using the Medallion Architecture. Raw IoT device telemetry lands in Azure Data Lake Storage Gen2, is processed through three transformation layers (Bronze, Silver, Gold) using Azure Databricks and Delta Lake, governed through Unity Catalog, and delivered to three tailored Power BI dashboards for Pet Owners, Manufacturers, and the Sales Executive Team.
+
+2.3 Business Objectives
+Objective	Metric	Target
+Pet Owner Engagement	Daily steps, heart rate, feeding/hydration trends per pet	Dashboard available daily
+Device Quality	Failure rate by factory, firmware success rate	Crash-prone device flag if >5 failures
+Revenue Analytics	Net revenue by channel, category, geography	Monthly sales summary
+Data Freshness	Bronze ingestion lag from raw upload	<2 hours
+Data Quality	Anomaly rate in Silver after cleaning	<5% anomaly rate per table
+
+2.4 Stakeholder Dashboards
+Dashboard	Audience	Gold Table	Key KPIs
+Pet Health Dashboard	Pet Owners	gold_pet_owner_daily_summary	Daily steps, heart rate, food/water intake, activity level, health alerts
+Device Quality Dashboard	Manufacturers / Engineers	gold_manufacturer_device_summary	Failure count, downtime, firmware success rate, battery health, crash-prone devices
+Sales Dashboard	Sales Executive Team	gold_sales_summary	Gross/net revenue, units sold, discount rate, channel performance, geography
+    
+ 
+   
+ 3. Architecture Overview
+3.1 Medallion Architecture
+The Medallion Architecture organises data into four progressively refined layers. Each layer has a distinct purpose, quality contract, and write strategy.
+
+Layer	Container	Format	Purpose	Write Mode
+Raw	raw/	JSON (day-partitioned)	Landing zone — exact copy of source data, no transformation	Append only — never modified
+Bronze	bronze/	Delta Lake	Raw ingestion with audit lineage columns — all types as String	Append (Auto Loader stream)
+Silver	silver/	Delta Lake	Cleaned, type-cast, anomaly-fixed — production-quality data	MERGE (upsert by primary key)
+Gold	gold/	Delta Lake (Unity Catalog managed)	Pre-aggregated KPIs for Power BI — one table per audience	Full overwrite per run
+
+3.2 Technology Stack
+Component	Technology	Version / Tier
+Data Generation	Python 3.12	Local machine — PyCharm
+Cloud Storage	Azure Data Lake Storage Gen2	Standard LRS, Hierarchical Namespace enabled
+Orchestration	Azure Data Factory V2	AutoResolveIntegrationRuntime (East US)
+Processing	Azure Databricks	Premium tier, Runtime 13.3 LTS (Spark 3.4, Scala 2.12)
+Table Format	Delta Lake	Built into DBR 13.3
+Table Governance	Unity Catalog	Managed catalog: petiot_dbx_dev
+Secrets Management	Azure Key Vault	Standard tier, scope: petiot
+Authentication	OAuth 2.0 via Service Principal	Client credentials flow
+BI Dashboards	Power BI Desktop + Service	Import mode, daily scheduled refresh
+Pipeline Trigger	ADF Tumbling Window Trigger	Daily cadence, start 2021-01-01
+
+3.3 End-to-End Data Flow
+┌─────────────────────────────────────────────────────────────┐
+│  LOCAL MACHINE — Python Data Generation                     │
+│  run_all.py → 14 CSV generators → inject_anomalies.py      │
+│  Output: partitioned_json/ (day-partitioned JSON files)     │
+└───────────────────┬─────────────────────────────────────────┘
+                    │ Browser upload (Azure Portal)
+                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│  ADLS GEN2: petiot storage account                          │
+│  raw/                                                       │
+│    owners.json  pets.json  products.json  ...  (dims flat)  │
+│    device_snapshots/year=2025/month=01/day=01/data.json     │
+│    sales/year=2021/month=03/day=15/data.json  (facts part.) │
+└───────────────────┬─────────────────────────────────────────┘
+                    │ ADF Tumbling Window Trigger (daily)
+                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│  ADF: PL_Master_MDR_Orchestrator                            │
+│    → PL_Ingest_Raw_To_Bronze  (ForEach 14 tables)           │
+│        → nb_raw_to_bronze (Databricks Notebook Activity)    │
+│    → PL_Bronze_To_Silver  (ForEach 14 tables)               │
+│        → nb_bronze_to_silver                                │
+│    → PL_Silver_To_Gold    (3 parallel notebooks)            │
+│        → nb_silver_to_gold_pet_owners                       │
+│        → nb_silver_to_gold_manufacturers                    │
+│        → nb_silver_to_gold_sales                            │
+└───────────────────┬─────────────────────────────────────────┘
+                    │ Azure Databricks (DBR 13.3 LTS)
+         ┌──────────┼──────────┐
+         ▼          ▼          ▼
+      bronze/    silver/     gold/ (Unity Catalog)
+      Delta       Delta      petiot_dbx_dev.gold.*
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│  POWER BI (Import Mode)                                     │
+│  Connected via Azure Databricks connector + PAT             │
+│  Scheduled refresh: daily 06:00 UTC                         │
+│  4 dashboard pages → 3 audiences                            │
+└─────────────────────────────────────────────────────────────┘
+
+3.4 Azure Resource Inventory
+Resource Type	Name	Region	Purpose
+Resource Group (Databricks auto)	databricks-rg-petiot-dbx-dev-dsurj4fg4kqzk	East US	Auto-created by Databricks deployment
+Storage Account	petiot	East US	Primary data lake (raw, bronze, silver, gold, checkpoints, audit)
+Storage Account	dbstoragekdf4e4ai6prxi	East US	Unity Catalog internal managed storage (auto-created)
+Databricks Workspace	petiot-dbx-dev	East US	PySpark processing, notebooks, Unity Catalog
+ADF Instance	pet-iot-dev-adf	East US	Pipeline orchestration
+Key Vault	(linked via secret scope "petiot")	East US	OAuth credentials for Service Principal
+Access Connector	unity-catalog-access-connector	East US	Managed Identity for Unity Catalog storage access
+SQL Warehouse	petiot-powerbi	East US	Power BI query endpoint (always-on)
+ 
+
+ 
+ 
+ 
+ 4. Synthetic Data Generation
+4.1 Why Synthetic Data
+This project uses entirely synthetic data for two reasons: (1) no real pet owner or device data exists in a portfolio context, and (2) synthetic data allows precise control over data distributions, anomaly rates, referential integrity, and scenario coverage without privacy concerns. All 14 tables were generated using Python scripts with realistic business rules and sensor simulation.
+
+4.2 Python Generator Scripts
+Script	Output	Key Logic
+generate_owners.py	owners.csv (5,000 rows)	100 first names × 100 last names. 10 domains. 52 city/state/country combos. Unique emails enforced.
+generate_pets.py	pets.csv (10,000 rows)	Every owner gets ≥1 pet. 10 species, 100+ breeds. Weight range per species. Randomised birth dates.
+generate_products.py	products.csv (16 rows)	Real IoT device names (Fi Collar, FitBark, Litter-Robot). 6 categories. MSRP ≥ 140% of cost.
+generate_firmware.py	firmware.csv (55 rows)	Semantic versioning v1.0.0–v5.1.1. 4 release types. Chronological release dates.
+generate_batches.py	batches.csv (500 rows)	15 factories in 4 countries (China 47%, India 26%, Vietnam 14%, Indonesia 12%).
+generate_devices.py	devices.csv (10,000 rows)	One device per pet. FK to pet, product, firmware (released before purchase), batch. Activation 0–14 days after purchase.
+generate_sales.py	sales.csv (10,000 rows)	One sale per device. Price = MSRP ±5%. 4 discount tiers. 7 sales channels. City/state from owner.
+generate_device_snapshots.py	device_snapshots.csv	All 10,000 devices × 4 snapshots/day (00:00, 06:00, 12:00, 18:00) × 14 days. Realistic sensor drift.
+generate_activity_snapshots.py	activity_snapshots.csv	Wearable devices only (~4,375). Low/Medium/High activity profiles. Steps peak 06–09 and 16–20.
+generate_health_snapshots.py	health_snapshots.csv	Health monitors only (~1,875). Heart rate 40–220bpm. 1% fever spike probability per hour.
+generate_feeding_events.py	feeding_events.csv	Smart Feeders only (~1,875). Twice daily: 07:00–09:00 and 17:00–19:00. Small/Medium/Large portions.
+generate_hydration_events.py	hydration_events.csv	Fountains only (~1,250). 4–6 drinks per day across 6 time windows.
+generate_device_failures.py	device_failures.csv (1,000 rows)	Intentionally skewed: Tier 1 (30 crash-prone devices) = 40% of failures.
+generate_firmware_deployments.py	firmware_deployments.csv (~35,000 rows)	2–5 deployments per device. Always newer firmware. Maintenance window 01:00–04:59.
+
+4.3 Data Generation Strategy
+Q: How did you ensure referential integrity across all 14 tables?
+A: The generator scripts run in strict dependency order via run_all.py: owners → pets → products → firmware → batches → devices → all facts. Each script reads the output of its dependencies before generating rows. For example, generate_devices.py reads all 5,000 owner IDs from owners.csv and all 10,000 pet IDs from pets.csv, then cross-references product IDs for firmware eligibility (only firmware released before purchase_date). This guarantees zero orphan foreign keys across all 14 tables.
+
+Q: How did you handle the device category restriction for fact tables?
+A: Each fact table script reads products.csv first and filters product_ids by device_category before loading devices.csv. For example, generate_activity_snapshots.py uses: wearable_categories = {"Smart Collars & Trackers", "Health Monitoring Devices"} and then filters devices where product_id is in that category set. This ensures only physically capable devices generate the corresponding telemetry — a smart feeder never generates heart rate data, a GPS collar never dispenses food.
+
+4.4 Anomaly Injection Framework
+After clean data generation, inject_anomalies.py introduces controlled data quality issues into the 8 fact tables only. Dimension tables are never touched — corrupted dimension data would break referential integrity in Databricks joins.
+
+Fact Table	Anomaly 1	Anomaly 2	Anomaly 3	Rate
+sales	Negative sale_price	discount_amount > sale_price	NULL sales_channel	5%
+device_snapshots	battery_pct < 0 or > 100	temperature_c = 0.0 (sensor dropout)	Duplicate device_id + timestamp	5%
+activity_snapshots	Negative steps	active_minutes > 60 (impossible)	Duplicate device_id + timestamp	5%
+health_snapshots	heart_rate = 0 or > 220	body_temperature < 35 or > 42	NULL vitals	5%
+feeding_events	food_dispensed ≤ 0	food_dispensed > 1000g	Duplicate feed_event_id	5%
+hydration_events	water_consumed ≤ 0	water_consumed > 2000ml	NULL water reading	5%
+device_failures	severity_score < 1 or > 10	Negative downtime_minutes	NULL failure_type	5%
+firmware_deployments	rollback_flag=True but status≠Rolled Back	Negative duration_seconds	NULL firmware_id	5%
+
+Q: Why inject anomalies rather than just generating clean data?
+A: Real IoT pipelines always have data quality issues: sensor malfunctions, network interruptions, firmware bugs, and human error all introduce bad data. By injecting controlled anomalies at exactly 5% rate per table, the Silver layer cleaning logic has something meaningful to demonstrate. The anomaly rate is low enough that the data is still useful, but high enough that every cleaning rule fires on every run, proving the Silver cleaner works correctly.
+
+4.5 Local Folder Structure After run_all.py
+C:/Users/tushitmaheshwari/PycharmProjects/PythonProjectDataset/
+  run_all.py               # Master — 6-phase orchestrator
+  inject_anomalies.py      # Injects 5% anomalies into 8 fact tables
+  generate_*.py            # 14 individual generator scripts
+  table_list.json          # ADF ForEach lookup config
+ 
+  clean_csv/               # Phase 1: 14 flat clean CSV files
+  anomalous_csv/           # Phase 2: 6 clean dims + 8 dirty fact CSVs
+  full_json/               # Phase 3: 14 flat JSON files
+  full_json_gz/            # Phase 4: 14 compressed .json.gz
+  partitioned_json/        # Phase 5: 8 fact tables day-partitioned
+    device_snapshots/
+      year=2025/month=01/day=01/device_snapshots.json
+      year=2025/month=01/day=02/device_snapshots.json
+      ...
+    sales/year=2021/month=03/day=15/sales.json
+    ...
+  partitioned_json_gz/     # Phase 6: partitioned .json.gz
+ 
+  5. Data Model — Star Schema
+5.1 Schema Design Decisions
+The data model follows a classic star schema with 6 dimension tables (describing entities) and 8 fact tables (recording events and measurements). All dimension tables use a single primary key. Fact tables use either a single surrogate key or a composite natural key (device_id + timestamp for snapshot tables).
+
+Q: Why use a star schema rather than a normalised 3NF model?
+A: Star schemas are optimised for analytical query patterns — BI tools like Power BI generate simpler SQL with fewer joins against star schemas compared to normalised models. Dimensional models also support partitioning and ZORDER optimisation in Delta Lake more effectively, since query predicates typically filter on fact table date columns and join to dimensions by key.
+
+5.2 Dimension Tables
+5.2.1 owners
+Column	Type	Description
+owner_id	STRING PK	Unique identifier OWN00001–OWN05000
+owner_name	STRING	Full name from 100×100 first/last name combinations
+email	STRING	Unique email across 10 domains (gmail, yahoo, outlook, etc.)
+phone	STRING	International format with country code per owner country
+city	STRING	City of residence (52 real city combinations)
+state	STRING	State or province
+country	STRING	One of 10 countries: US, UK, Canada, Australia, India, Germany, France, Brazil, Japan, UAE
+registration_date	TIMESTAMP	Random date between Jan 2015 and Dec 2025
+
+5.2.2 pets
+Column	Type	Description
+pet_id	STRING PK	Unique identifier PET00001–PET10000
+owner_id	STRING FK	References owners.owner_id — every pet has exactly one owner
+pet_name	STRING	From 100 common pet names (Bella, Max, Luna, etc.)
+species	STRING	Dog, Cat, Bird, Rabbit, Fish, Hamster, Guinea Pig, Reptile, Turtle, Ferret
+breed	STRING	100+ real breeds mapped per species
+gender	STRING	Male or Female
+birth_date	DATE	Random within last 15 years
+weight_kg	DECIMAL(10,2)	Realistic range per species (Hamster: 0.02–0.2kg, Dog: 1–80kg)
+
+5.2.3 products
+Column	Type	Description
+product_id	STRING PK	PRD00001–PRD00016 (16 real IoT device models)
+product_name	STRING	Real product names: Fi Smart Dog Collar, Litter-Robot 4, FitBark GPS, etc.
+device_category	STRING	6 categories: Smart Collars & Trackers, Health Monitoring Devices, Smart Feeders, Smart Water Feeders & Fountains, Pet Cameras & Interaction Devices, Smart Doors & Litter Systems
+manufacturing_cost	DECIMAL(10,2)	Realistic cost per category (e.g. $28–$65 for collars)
+msrp	DECIMAL(10,2)	Always ≥ 140% of manufacturing_cost
+
+5.2.4 firmware
+Column	Type	Description
+firmware_id	STRING PK	FW00001–FW00055 (55 releases)
+firmware_version	STRING	Semantic versioning v1.0.0 through v5.1.1
+release_date	DATE	Chronologically ordered Jan 2021 – Jun 2025
+release_type	STRING	General Availability, Feature Release, Bug Fix, Security Patch
+
+5.2.5 batches
+Column	Type	Description
+batch_id	STRING PK	BAT00001–BAT00500
+factory_name	STRING	15 factories across 4 countries
+factory_location	STRING	City, Country (e.g. Shenzhen, China)
+production_date	DATE	Between Jan 2021 and today
+
+5.2.6 devices
+The central bridge dimension. Every fact table joins here via device_id.
+Column	Type	Description
+device_id	STRING PK	DEV00001–DEV10000
+pet_id	STRING FK	References pets.pet_id
+product_id	STRING FK	References products.product_id — determines which fact tables apply
+firmware_id	STRING FK	References firmware.firmware_id — firmware at time of purchase
+batch_id	STRING FK	References batches.batch_id
+purchase_date	DATE	Random Mar 2021 – present
+activation_date	DATE	0–14 days after purchase_date
+warranty_end_date	DATE	1 year (40%) or 2 years (60%) from purchase_date
+
+5.3 Fact Tables
+5.3.1 sales
+Column	Type	Description
+sale_id	STRING PK	SAL000001–SAL010000
+sale_date	DATE	= device.purchase_date (one sale per device)
+device_id	STRING FK	References devices.device_id
+owner_id	STRING FK	References owners.owner_id (via pet → owner chain)
+sale_price	DECIMAL(10,2)	MSRP ± 5% market variation minus discount
+discount_amount	DECIMAL(10,2)	0–40% discount across 4 probability tiers
+sales_channel	STRING	7 channels: Online Brand Website, Amazon, Chewy, Pet Store, Vet Clinic, Superstore, Distributor
+city	STRING	Owner city at time of sale
+state	STRING	Owner state at time of sale
+
+5.3.2 device_snapshots
+Hourly (4x/day) telemetry from ALL 10,000 devices regardless of category. Battery, signal, temperature are universal device metrics.
+Column	Type	Description
+snapshot_id	STRING PK	SNP000000001+
+snapshot_timestamp	TIMESTAMP	00:00, 06:00, 12:00, 18:00 each day
+device_id	STRING FK	References devices.device_id
+battery_pct	DECIMAL(5,2)	0.0–100.0. Drains during 06:00–22:00 active hours. Recovers overnight.
+signal_strength	INTEGER	0–100 proxy. 3% chance of drop event per reading.
+temperature_c	DECIMAL(5,2)	Pet body temperature 35.0–42.0°C. Rises during active hours.
+
+5.3.3 activity_snapshots
+Wearable devices ONLY: Smart Collars & Trackers (PRD00001-04) + Health Monitoring Devices (PRD00005-07). ~4,375 devices.
+Column	Type	Description
+activity_snapshot_id	STRING PK	ACT000000001+
+snapshot_timestamp	TIMESTAMP	Same 4x/day schedule
+device_id	STRING FK	Wearable device only
+pet_id	STRING	Denormalised from devices for query convenience
+steps	INTEGER	0 during rest hours. Peaks 06–09 and 16–20. Low/Medium/High device profiles.
+distance_km	DECIMAL(10,2)	steps × 0.45m ÷ 1000
+active_minutes	INTEGER	steps ÷ 80 steps/min. Capped at 60 (hourly grain).
+
+5.3.4 health_snapshots
+Health Monitoring Devices ONLY (PRD00005-07). ~1,875 devices. ~11,200 rows total.
+Column	Type	Description
+health_snapshot_id	STRING PK	HLT000000001+
+snapshot_timestamp	TIMESTAMP	4x/day
+device_id	STRING FK	Health monitor only
+pet_id	STRING	Denormalised
+heart_rate	INTEGER	40–220 bpm. Resting 55–80. Active 100–160. 2% spike chance.
+pulse_rate	INTEGER	Tracks heart_rate ±3 bpm. 2% chance of sensor noise divergence.
+body_temperature	DECIMAL(5,2)	35.0–42.0°C. 1% chance of fever spike (+0.5–1.5°C) per reading.
+
+5.3.5 feeding_events
+Smart Feeders ONLY (PRD00008-10). ~1,875 devices. ~53,978 rows (14 days × 2 feeds/day).
+Column	Type	Description
+feed_event_id	STRING PK	FED0000001+
+event_timestamp	TIMESTAMP	Morning 07:00–08:59, Evening 17:00–18:59
+device_id	STRING FK	Smart feeder only
+pet_id	STRING	Denormalised
+food_dispensed_grams	DECIMAL(10,2)	Small: 30–80g, Medium: 80–180g, Large: 180–350g. Profile assigned per device.
+
+5.3.6 hydration_events
+Smart Water Feeders & Fountains ONLY (PRD00011-12). ~1,250 devices. ~94,038 rows.
+Column	Type	Description
+water_event_id	STRING PK	WAT00000001+
+event_timestamp	TIMESTAMP	4–6 sessions/day across 6 windows (06:00, 09:00, 12:00, 15:00, 18:00, 21:00)
+device_id	STRING FK	Fountain only
+pet_id	STRING	Denormalised
+water_consumed_ml	DECIMAL(10,2)	Low: 20–60ml, Medium: 60–150ml, High: 150–300ml.
+
+5.3.7 device_failures
+All devices. 1,000 rows. Intentionally skewed failure distribution.
+Column	Type	Description
+failure_id	STRING PK	FAIL00001–FAIL01000
+device_id	STRING FK	All devices eligible
+failure_timestamp	TIMESTAMP	Random Jan 2024 – Jun 2025
+failure_type	STRING	12 types: Battery Drain, GPS Signal Loss, Firmware Crash, Power Surge, etc.
+downtime_minutes	INTEGER	Varies by type: Battery Drain 5–60min, Power Surge 120–600min
+severity_score	INTEGER	1–10. Formula: base_score + downtime_bonus(0–3) ± 1 noise. Clamped 1–10.
+
+Q: How is the severity_score calculated?
+A: severity_score = base_score + downtime_bonus + noise. Base score comes from failure_type (e.g. Power Surge = 9, Battery Drain = 2). Downtime bonus: 0 if <30min, 1 if 30–119min, 2 if 120–299min, 3 if ≥300min. A random ±1 noise factor is added. Result is clamped to 1–10. This makes the score mathematically consistent with both failure type and actual downtime, enabling meaningful correlation analysis in dashboards.
+
+5.3.8 firmware_deployments
+Column	Type	Description
+deployment_id	STRING PK	DEP0000001+
+device_id	STRING FK	All devices
+firmware_id	STRING FK	Always newer than the device's installed firmware
+deployment_timestamp	TIMESTAMP	Always after purchase_date. Maintenance window 01:00–04:59.
+deployment_status	STRING	Success 80%, Failed 12%, Pending 5%, Rolled Back 3%
+rollback_flag	BOOLEAN	True only when status = Rolled Back
+deployment_duration_seconds	INTEGER	Success: 45–180s, Failed: 10–60s, Rolled Back: 90–300s
+
+5.4 Referential Integrity Chain
+owners
+  └── pets (FK: owner_id)
+        └── devices (FK: pet_id)
+              ├── products (FK: product_id) ← determines fact table eligibility
+              ├── batches  (FK: batch_id)   ← factory of manufacture
+              ├── firmware (FK: firmware_id) ← firmware at purchase
+              └── [all 8 fact tables] (FK: device_id)
+                    ├── sales
+                    ├── device_snapshots            (all devices)
+                    ├── activity_snapshots          (wearables only)
+                    ├── health_snapshots            (health monitors only)
+                    ├── feeding_events              (smart feeders only)
+                    ├── hydration_events            (smart fountains only)
+                    ├── device_failures             (all devices)
+                    └── firmware_deployments        (all devices)
+
+5.5 Device Category to Fact Table Mapping
+Device Category	Product IDs	Generates These Fact Tables
+Smart Collars & Trackers	PRD00001–PRD00004	device_snapshots, activity_snapshots
+Health Monitoring Devices	PRD00005–PRD00007	device_snapshots, activity_snapshots, health_snapshots
+Smart Feeders	PRD00008–PRD00010	device_snapshots, feeding_events
+Smart Water Feeders & Fountains	PRD00011–PRD00012	device_snapshots, hydration_events
+Pet Cameras & Interaction Devices	PRD00013–PRD00014	device_snapshots only
+Smart Doors & Litter Systems	PRD00015–PRD00016	device_snapshots only
+ 6. Azure Infrastructure Setup
+6.1 Resource Group & Storage Account
+All resources reside in the Azure subscription "Tushit-Dev." The Databricks workspace auto-created a managed resource group for its internal infrastructure.
+Setting	Value
+Subscription	Tushit-Dev
+Primary Resource Group	databricks-rg-petiot-dbx-dev-dsurj4fg4kqzk (auto-created by Databricks)
+Storage Account Name	petiot
+Storage Account Type	Standard LRS
+Hierarchical Namespace	ENABLED (required for Delta Lake and ADLS Gen2 folder semantics)
+Region	East US (matches Databricks workspace region)
+
+6.2 ADLS Gen2 Container Structure
+Container	Purpose	Contents
+raw	Landing zone — source JSON files, never modified	6 flat dimension JSON files + 8 fact table day-partitioned JSON folders
+bronze	Bronze Delta tables	14 Delta table folders, one per table, including 6 audit lineage columns
+silver	Silver Delta tables	14 Delta table folders, cleaned and type-cast
+gold	Gold Delta tables (via Unity Catalog managed)	3 Gold aggregated tables accessible via petiot_dbx_dev.gold.*
+checkpoints	Auto Loader state	bronze/{table}/ checkpoint + schemas/{table}/ schema location per table
+unity-catalog-storage	Unity Catalog internal metadata	Managed by Databricks — do not modify manually
+audit	Audit framework Delta tables	pipeline_runs/, table_runs/, data_quality/
+ 
+ 
+6.3 Azure Databricks Workspace
+Setting	Value
+Workspace name	petiot-dbx-dev
+Workspace URL	https://adb-7405607363756765.5.azuredatabricks.net
+Workspace ID	7405607363756765
+Tier	Premium (required for Unity Catalog)
+Databricks Runtime	13.3 LTS (Spark 3.4, Scala 2.12) — REQUIRED, workspace has disabled legacy runtimes
+Cluster type used in ADF	New Job Cluster (switched from Interactive — see Section 17.1)
+Auto Loader	Built-in to DBR 13.3 (cloudFiles format)
+Delta Lake	Built-in to DBR 13.3
+
+Q: Why must the Databricks Runtime be 13.3 LTS or higher?
+A: The Databricks workspace has legacy DBFS access and legacy access mode disabled at the workspace level. Any cluster using Runtime below 13.3 LTS triggers the error: INVALID_PARAMETER_VALUE: Spark version X isn't supported because both legacy access and legacy DBFS are disabled. Runtime 13.3 LTS is the minimum version supporting Unity Catalog's shared access mode without legacy features. All notebooks are designed and tested against 13.3 LTS.
+
+6.4 Azure Data Factory
+Setting	Value
+ADF instance name	pet-iot-dev-adf
+Version	V2
+Integration runtime	AutoResolveIntegrationRuntime (East US)
+Linked Services	LS_ADLS_PetIoT (ADLS), LS_Databricks_PetIoT (Databricks)
+Datasets	DS_TableList (JSON lookup for table_list.json)
+Pipelines	4: PL_Master_MDR_Orchestrator, PL_Ingest_Raw_To_Bronze, PL_Bronze_To_Silver, PL_Silver_To_Gold
+Trigger	TRG_Daily_Bronze (Tumbling Window, start 2021-01-01, daily cadence)
+ 
+
+6.5 Azure Key Vault & Secret Scope
+All credentials are stored in Azure Key Vault and accessed via Databricks secret scope — no credentials are hardcoded in notebooks or committed to any repository.
+Key Vault Secret Name	Contains	Used in
+client-id	Service Principal Application (client) ID	set_auth_context.py
+client-secret	Service Principal client secret value	set_auth_context.py
+tenant-id	Azure Active Directory tenant ID	set_auth_context.py
+
+# Databricks secret scope: "petiot" (Key Vault backed)
+# Access secrets in any notebook:
+client_id     = dbutils.secrets.get(scope="petiot", key="client-id")
+client_secret = dbutils.secrets.get(scope="petiot", key="client-secret")
+tenant_id     = dbutils.secrets.get(scope="petiot", key="tenant-id")
+ 
+# Verify scope exists:
+dbutils.secrets.listScopes()
+# Should show: [SecretScope(name="petiot")]
+ 
+# Verify secrets accessible:
+dbutils.secrets.list(scope="petiot")
+# Should show: client-id, client-secret, tenant-id (values masked)
+
+Q: How is the secret scope created and linked to Key Vault?
+A: Navigate to https://{databricks-workspace-url}#secrets/createScope. Set Scope Name = "petiot", DNS Name = your Key Vault URL, Resource ID = your Key Vault resource ID. Databricks creates a Key Vault-backed scope that reads secrets directly from Key Vault at runtime. No secret values are ever stored in Databricks itself — only a reference to the Key Vault scope.
+
+6.6 Service Principal & OAuth Configuration
+# Full OAuth configuration in set_auth_context.py
+# This runs at the top of every orchestrator notebook via %run
+ 
+STORAGE_ACCOUNT = "petiot"
+ 
+spark.conf.set(
+    f"fs.azure.account.auth.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    "OAuth")
+spark.conf.set(
+    f"fs.azure.account.oauth.provider.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
+spark.conf.set(
+    f"fs.azure.account.oauth2.client.id.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    dbutils.secrets.get(scope="petiot", key="client-id"))
+spark.conf.set(
+    f"fs.azure.account.oauth2.client.secret.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    dbutils.secrets.get(scope="petiot", key="client-secret"))
+spark.conf.set(
+    f"fs.azure.account.oauth2.client.endpoint.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    f"https://login.microsoftonline.com/{tenant_id}/oauth2/token")
+ 
+# abfss() path helper injected into all calling notebooks:
+def abfss(container: str, path: str = "") -> str:
+    base = f"abfss://{container}@{STORAGE_ACCOUNT}.dfs.core.windows.net"
+    return f"{base}/{path.lstrip('/')}" if path else base
+ 
+
+  7. Unity Catalog
+7.1 Why Unity Catalog over Hive Metastore
+Feature	Hive Metastore	Unity Catalog
+Scope	Workspace-local only	Cross-workspace, account-level
+Access Control	Coarse-grained (database level)	Fine-grained (column level)
+Lineage	None	Full data lineage tracking
+Audit logs	Limited	Comprehensive audit trail
+Cross-workspace sharing	Not supported	Native support
+Power BI integration	Works but no governance	Governed, permissioned assets visible in navigator
+
+7.2 Metastore Setup
+The Unity Catalog metastore was created at the account level (accounts.azuredatabricks.net) and assigned to the petiot-dbx-dev workspace. The metastore uses a dedicated ADLS container (unity-catalog-storage) for its internal metadata storage.
+Setting	Value
+Metastore storage	abfss://unity-catalog-storage@dbstoragekdf4e4ai6prxi.dfs.core.windows.net/7405607363756765
+Storage credential	petiot_dbx_dev (System-Assigned Managed Identity via unity-catalog-access-connector)
+Catalog ID	99e432da-d5fa-4cf4-a946-512c90c75c4e
+Recovery period	7 days (tables recoverable via UNDROP after drop)
+ 
+7.3 Catalog and Schema Creation
+-- Run once in Databricks SQL Editor or %sql cell
+ 
+-- The catalog already existed as petiot_dbx_dev (auto-created by workspace)
+-- Create the Gold schema inside it:
+CREATE SCHEMA IF NOT EXISTS petiot_dbx_dev.gold
+COMMENT "Gold layer — pre-aggregated tables for Power BI dashboards";
+ 
+-- Verify:
+SHOW SCHEMAS IN petiot_dbx_dev;
+-- Expected: gold (and any other schemas)
+
+7.4 Registering Gold Tables
+Gold tables are written as MANAGED Unity Catalog tables using saveAsTable(). This stores data in the Unity Catalog internal storage (dbstoragekdf4e4ai6prxi) rather than the petiot ADLS container. Tables are fully governed by Unity Catalog.
+-- Gold tables are created automatically by gold_writer.py via saveAsTable()
+-- To manually register or verify:
+ 
+SHOW TABLES IN petiot_dbx_dev.gold;
+ 
+-- Row count verification:
+SELECT "pet_owner"    AS tbl, COUNT(*) AS rows
+FROM petiot_dbx_dev.gold.gold_pet_owner_daily_summary
+UNION ALL
+SELECT "manufacturer", COUNT(*) FROM petiot_dbx_dev.gold.gold_manufacturer_device_summary
+UNION ALL
+SELECT "sales",        COUNT(*) FROM petiot_dbx_dev.gold.gold_sales_summary;
+
+ 
+ 
+ 
+ 
+7.5 External Location (Optional Enhancement)
+To read/write data in the petiot ADLS container from Unity Catalog using LOCATION clauses, an External Location must be registered. This requires the unity-catalog-access-connector Managed Identity to have Storage Blob Data Contributor on the petiot storage account.
+-- After granting IAM role on petiot storage account:
+-- Portal → Storage Account: petiot → Access Control (IAM)
+-- → Add role: Storage Blob Data Contributor
+-- → Assign to: Managed Identity → Access Connector for Azure Databricks
+ 
+-- Then in Databricks: Catalog Explorer → External Data → External Locations
+-- → Create: Name = petiot-gold
+--            URL  = abfss://gold@petiot.dfs.core.windows.net/
+--            Credential = petiot_dbx_dev
+ 
+-- After External Location is registered, can use LOCATION clause:
+CREATE TABLE IF NOT EXISTS petiot_dbx_dev.gold.gold_sales_summary
+USING DELTA
+LOCATION "abfss://gold@petiot.dfs.core.windows.net/gold_sales_summary";
+
+7.6 Access Control
+-- Grant read access to a Power BI service principal:
+GRANT USE CATALOG ON CATALOG petiot_dbx_dev TO `powerbi-sp@domain.com`;
+GRANT USE SCHEMA  ON SCHEMA petiot_dbx_dev.gold TO `powerbi-sp@domain.com`;
+GRANT SELECT ON TABLE petiot_dbx_dev.gold.gold_pet_owner_daily_summary TO `powerbi-sp@domain.com`;
+GRANT SELECT ON TABLE petiot_dbx_dev.gold.gold_manufacturer_device_summary TO `powerbi-sp@domain.com`;
+GRANT SELECT ON TABLE petiot_dbx_dev.gold.gold_sales_summary TO `powerbi-sp@domain.com`;
+ 
+-- Verify grants:
+SHOW GRANTS ON TABLE petiot_dbx_dev.gold.gold_sales_summary;
+  8. Raw Data Upload & Partitioning
+8.1 Upload Strategy
+Due to corporate restrictions on installing third-party software (Storage Explorer, AzCopy), all raw data was uploaded directly via the Azure Portal browser interface. Dimension tables were uploaded as flat JSON files. Fact tables were uploaded as flat JSON files first, then repartitioned in Databricks.
+1.	Generate all data locally using run_all.py
+2.	Open Azure Portal → Storage Account: petiot → Containers → raw
+3.	Click Upload → select all 14 JSON files from partitioned_json/ folder
+4.	Upload directly into the raw/ root (no subfolders at upload time for fact tables)
+5.	Run nb_partition_raw_fact_tables in Databricks to create year=/month=/day=/ hierarchy
+
+8.2 Day-Partitioned Structure
+Fact tables must be partitioned by date in raw/ for the Tumbling Window incremental load to work correctly. Each ADF pipeline run processes only the partition matching its window date.
+raw/
+  # Dimension tables — flat files at root:
+  owners.json
+  pets.json
+  products.json
+  firmware.json
+  batches.json
+  devices.json
+ 
+  # Fact tables — day-partitioned:
+  device_snapshots/
+    year=2025/month=01/day=01/device_snapshots.json   (28,000 rows)
+    year=2025/month=01/day=02/device_snapshots.json
+    ...up to day=14
+  activity_snapshots/year=.../month=.../day=.../
+  health_snapshots/year=.../month=.../day=.../
+  feeding_events/year=.../month=.../day=.../
+  hydration_events/year=.../month=.../day=.../
+  sales/year=2021/.../  through year=2025/.../  (multi-year)
+  device_failures/year=2024/...  through year=2025/.../
+  firmware_deployments/year=2021/...  through year=2025/.../
+
+8.3 nb_partition_raw_fact_tables Notebook
+This utility notebook reads each flat fact JSON file from raw/, partitions it by the relevant date/timestamp column, writes day-partitioned JSON files, renames Spark's part-* files to clean table_name.json, and deletes the original flat file.
+# Notebook: /Shared/pet-analytics/shared/nb_partition_raw_fact_tables
+ 
+from pyspark.sql.functions import year, month, dayofmonth, to_timestamp, lpad
+ 
+FACT_TABLES = {
+    "sales":                "sale_date",
+    "device_snapshots":     "snapshot_timestamp",
+    "activity_snapshots":   "snapshot_timestamp",
+    "health_snapshots":     "snapshot_timestamp",
+    "feeding_events":       "event_timestamp",
+    "hydration_events":     "event_timestamp",
+    "device_failures":      "failure_timestamp",
+    "firmware_deployments": "deployment_timestamp",
+}
+ 
+for table_name, ts_col in FACT_TABLES.items():
+    flat_file = abfss("raw", f"{table_name}.json")
+    out_path  = abfss("raw", table_name)
+ 
+    df = (spark.read
+          .option("multiLine", "true")
+          .option("inferSchema", "true")
+          .json(flat_file))
+ 
+    # Derive zero-padded partition columns
+    df = (df
+          .withColumn("_ts",   to_timestamp(col(ts_col)))
+          .withColumn("year",  year("_ts").cast("string"))
+          .withColumn("month", lpad(month("_ts").cast("string"), 2, "0"))
+          .withColumn("day",   lpad(dayofmonth("_ts").cast("string"), 2, "0"))
+          .drop("_ts"))
+ 
+    # Write partitioned
+    (df.repartition(col("year"), col("month"), col("day"))
+       .write.partitionBy("year","month","day")
+       .mode("overwrite")
+       .json(out_path))
+ 
+    # Delete original flat file
+    dbutils.fs.rm(flat_file, recurse=False)
+ 
+   
+  
+ 
+
+9. Azure Data Factory Pipeline Design
+9.1 Pipeline Architecture Overview
+TRG_Daily_Bronze (Tumbling Window Trigger)
+  ↓  fires PL_Master_MDR_Orchestrator with window_start_time
+  ↓
+PL_Master_MDR_Orchestrator
+  ├── EP_Run_Raw_To_Bronze    → PL_Ingest_Raw_To_Bronze  (waitOnCompletion: true)
+  ├── EP_Run_Bronze_To_Silver → PL_Bronze_To_Silver      (depends: Bronze succeeded)
+  └── EP_Run_Silver_To_Gold   → PL_Silver_To_Gold        (depends: Silver succeeded)
+
+9.2 table_list.json Lookup Config
+Stored in ADLS raw/config/table_list.json. The ADF Lookup activity reads this file at the start of each Bronze and Silver pipeline run, providing the ForEach loop with all 14 table names and their properties.
+[
+  {"table_name":"owners",       "table_type":"dimension","is_incremental":false,
+   "watermark_column":null,     "partition_column":null},
+  {"table_name":"pets",         "table_type":"dimension","is_incremental":false,...},
+  {"table_name":"products",     "table_type":"dimension","is_incremental":false,...},
+  {"table_name":"firmware",     "table_type":"dimension","is_incremental":false,...},
+  {"table_name":"batches",      "table_type":"dimension","is_incremental":false,...},
+  {"table_name":"devices",      "table_type":"dimension","is_incremental":false,...},
+  {"table_name":"sales",               "table_type":"fact","is_incremental":true,
+   "watermark_column":"sale_date",      "partition_column":"sale_date"},
+  {"table_name":"device_snapshots",    "table_type":"fact","is_incremental":true,
+   "watermark_column":"snapshot_timestamp","partition_column":"snapshot_timestamp"},
+  {"table_name":"activity_snapshots",  "table_type":"fact","is_incremental":true,...},
+  {"table_name":"health_snapshots",    "table_type":"fact","is_incremental":true,...},
+  {"table_name":"feeding_events",      "table_type":"fact","is_incremental":true,...},
+  {"table_name":"hydration_events",    "table_type":"fact","is_incremental":true,...},
+  {"table_name":"device_failures",     "table_type":"fact","is_incremental":true,...},
+  {"table_name":"firmware_deployments","table_type":"fact","is_incremental":true,...}
+]
+
+9.3 PL_Master_MDR_Orchestrator
+The top-level orchestrator. Accepts window_start_time as a string parameter. Chains Bronze → Silver → Gold sequentially using ExecutePipeline activities with waitOnCompletion: true.
+{
+  "name": "PL_Master_MDR_Orchestrator",
+  "parameters": {
+    "window_start_time": {"type": "string", "defaultValue": "2021-01-01T00:00:00Z"}
+  },
+  "activities": [
+    {
+      "name": "EP_Run_Raw_To_Bronze",
+      "type": "ExecutePipeline",
+      "typeProperties": {
+        "pipeline": {"referenceName": "PL_Ingest_Raw_To_Bronze"},
+        "waitOnCompletion": true,
+        "parameters": {
+          "window_start_time": {
+            "value": "@pipeline().parameters.window_start_time",
+            "type": "Expression"
+          }
+        }
+      }
+    },
+    {
+      "name": "EP_Run_Bronze_To_Silver",
+      "type": "ExecutePipeline",
+      "dependsOn": [{"activity":"EP_Run_Raw_To_Bronze","dependencyConditions":["Succeeded"]}],
+      ...
+    },
+    {"name": "EP_Run_Silver_To_Gold", "dependsOn": ["EP_Run_Bronze_To_Silver"Succeeded]...}
+  ]
+}
+
+9.4 PL_Ingest_Raw_To_Bronze
+Reads table_list.json via Lookup, iterates all 14 tables via ForEach, executes nb_raw_to_bronze notebook for each.
+Activity	Type	Configuration
+LKP_Get_Table_Metadata	Lookup	Source: DS_TableList pointing to raw/config/table_list.json. First row only: false.
+FE_Loop_Through_Tables	ForEach	Items: @activity("LKP_Get_Table_Metadata").output.value. Batch count: 4. Is Sequential: false.
+NB_Execute_Raw_To_Bronze	DatabricksNotebook (inside ForEach)	Notebook: /Shared/pet-analytics/bronze/nb_raw_to_bronze. Cluster: New Job Cluster DBR 13.3 LTS.
+ 
+
+  
+ 
+9.5 PL_Bronze_To_Silver
+Same ForEach pattern as Bronze, executing nb_bronze_to_silver for each of the 14 tables.
+Activity	Type	Configuration
+LKP_Get_Table_Metadata	Lookup	Same table_list.json source
+FE_Loop_Through_Tables	ForEach	Batch count: 4
+NB_Execute_Bronze_To_Silver	DatabricksNotebook	Notebook: /Shared/pet-analytics/silver/nb_bronze_to_silver
+
+9.6 PL_Silver_To_Gold
+Three parallel Notebook Activities (no ForEach needed — Gold has only 3 fixed notebooks). All three run simultaneously; each writes one Gold table.
+Activity	Type	Notebook
+NB_Silver_To_Gold_Pet_Owners	DatabricksNotebook	/Shared/pet-analytics/gold/nb_silver_to_gold_pet_owners
+NB_Silver_To_Gold_Manufacturers	DatabricksNotebook	/Shared/pet-analytics/gold/nb_silver_to_gold_manufacturers
+NB_Silver_To_Gold_Sales	DatabricksNotebook	/Shared/pet-analytics/gold/nb_silver_to_gold_sales
+
+9.7 ADF Parameters & Expressions
+Parameter	Passed from	Expression	Meaning
+window_start_time	Trigger → Master	@trigger().outputs.windowStartTime	The window's specific start datetime from Tumbling Window
+window_start_time	Master → Bronze/Silver/Gold	@pipeline().parameters.window_start_time	Forward the received value to child pipeline
+table_name	ForEach item	@item().table_name	Current table in loop (e.g. "device_snapshots")
+table_type	ForEach item	@item().table_type	"dimension" or "fact"
+is_incremental	ForEach item	@item().is_incremental	true for facts, false for dimensions
+load_date	Notebook base param	formatDateTime(window_start_time, "yyyy-MM-dd")	Date string for partitioned path resolution
+
+Q: How does the parameter flow from the trigger all the way to the Databricks notebook?
+A: TRG_Daily_Bronze fires with window_start_time = @trigger().outputs.windowStartTime (e.g. "2025-01-03T00:00:00Z"). This passes to PL_Master_MDR_Orchestrator as a string parameter. The Master's ExecutePipeline activities forward it to PL_Ingest_Raw_To_Bronze using the Expression type: @pipeline().parameters.window_start_time. Inside the Bronze pipeline, the Notebook Activity's base parameter p_load_date is set to: @if(empty(pipeline().parameters.window_start_time), formatDateTime(utcNow(),"yyyy-MM-dd"), formatDateTime(pipeline().parameters.window_start_time,"yyyy-MM-dd")). This evaluated string (e.g. "2025-01-03") is received by the Databricks notebook via dbutils.widgets.get("load_date").
+
+9.8 Tumbling Window Trigger
+{
+  "name": "TRG_Daily_Bronze",
+  "type": "TumblingWindowTrigger",
+  "pipeline": {
+    "referenceName": "PL_Master_MDR_Orchestrator",
+    "parameters": {
+      "window_start_time": "@trigger().outputs.windowStartTime"
+    }
+  },
+  "typeProperties": {
+    "frequency": "Hour",
+    "interval": 24,
+    "startTime": "2021-01-01T00:00:00Z",
+    "delay": "00:00:00",
+    "maxConcurrency": 2,
+    "retryPolicy": { "count": 3, "intervalInSeconds": 300 },
+    "dependsOn": []
+  }
+}
+
+Q: Why use a Tumbling Window trigger rather than a Schedule trigger?
+A: A Tumbling Window trigger maintains state — it tracks exactly which windows have succeeded and which are pending. When the trigger starts with startTime=2021-01-01, ADF automatically generates every missing daily window from 2021-01-01 to the current date, effectively running a backfill. A Schedule trigger has no memory of historical runs and cannot backfill. Additionally, Tumbling Window makes the window boundaries (windowStartTime, windowEndTime) available as trigger output variables, which we pass directly as the pipeline's load_date parameter.
+
+9.9 Linked Services
+Linked Service	Type	Authentication	Key Setting
+LS_ADLS_PetIoT	Azure Data Lake Storage Gen2	System-Assigned Managed Identity	Account: petiot
+LS_Databricks_PetIoT	Azure Databricks	Access Token (from Key Vault)	Cluster type: New Job Cluster, Runtime: 13.3.x-scala2.12
+
+9.10 ADF Monitoring
+All pipeline runs are visible in ADF Studio → Monitor. The Trigger Runs view shows each Tumbling Window firing with its specific window dates, confirming the backfill is progressing sequentially.
+  
+   
+10. Bronze Layer Notebooks
+10.1 Design Philosophy
+The Bronze layer follows a strict single-responsibility principle. Five notebooks each own exactly one concern: schema governance, ingestion, lineage injection, and Delta writes. The orchestrator (nb_raw_to_bronze) calls the four specialists in sequence but contains zero business logic itself.
+Notebook	Single Responsibility	Forbidden From
+nb_raw_to_bronze	Orchestration — calls others in sequence	Any logic, any reads, any writes
+schema_manager	StructType definitions for all 14 tables	spark.read, spark.write, Delta
+autoloader	Source paths, checkpoint paths, readStream/read	Writes, schemas, column transforms
+lineage	Inject 6 _bronze_* audit columns	Reads, writes, business logic
+writer	writeStream and write.format("delta")	Reads, schemas, MERGE
+ 
+10.2 set_auth_context
+Shared utility notebook. Configures OAuth, injects the abfss() helper into the calling notebook's scope. Must be %run before any other specialist notebook.
+# /Shared/pet-analytics/shared/set_auth_context
+ 
+dbutils.widgets.text("storage_account", "petiot")
+STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+ 
+client_id     = dbutils.secrets.get(scope="petiot", key="client-id")
+client_secret = dbutils.secrets.get(scope="petiot", key="client-secret")
+tenant_id     = dbutils.secrets.get(scope="petiot", key="tenant-id")
+ 
+spark.conf.set(f"fs.azure.account.auth.type.{STORAGE_ACCOUNT}.dfs.core.windows.net", "OAuth")
+spark.conf.set(f"fs.azure.account.oauth.provider.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
+spark.conf.set(f"fs.azure.account.oauth2.client.id.{STORAGE_ACCOUNT}.dfs.core.windows.net", client_id)
+spark.conf.set(f"fs.azure.account.oauth2.client.secret.{STORAGE_ACCOUNT}.dfs.core.windows.net", client_secret)
+spark.conf.set(f"fs.azure.account.oauth2.client.endpoint.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    f"https://login.microsoftonline.com/{tenant_id}/oauth2/token")
+ 
+def abfss(container: str, path: str = "") -> str:
+    base = f"abfss://{container}@{STORAGE_ACCOUNT}.dfs.core.windows.net"
+    return f"{base}/{path.lstrip('/')}" if path else base
+ 
+print(f"[set_auth_context] Auth configured for: {STORAGE_ACCOUNT}")
+
+10.3 schema_manager
+Owns all 14 StructType definitions. All columns are StringType at Bronze — this is deliberate because anomaly injection may have placed text values in numeric fields. Silver owns type casting after cleaning.
+# /Shared/pet-analytics/bronze/schema_manager
+ 
+from pyspark.sql.types import StructType, StructField, StringType
+ 
+_SCHEMAS = {
+    "owners": StructType([
+        StructField("owner_id",          StringType(), False),  # PK
+        StructField("owner_name",        StringType(), True),
+        StructField("email",             StringType(), True),
+        StructField("phone",             StringType(), True),
+        StructField("city",              StringType(), True),
+        StructField("state",             StringType(), True),
+        StructField("country",           StringType(), True),
+        StructField("registration_date", StringType(), True),
+    ]),
+    # ... 13 more schemas (all StringType)
+    "device_snapshots": StructType([
+        StructField("snapshot_id",        StringType(), False),
+        StructField("snapshot_timestamp", StringType(), True),
+        StructField("device_id",          StringType(), True),
+        StructField("battery_pct",        StringType(), True),  # StringType at Bronze
+        StructField("signal_strength",    StringType(), True),  # cast to Integer in Silver
+        StructField("temperature_c",      StringType(), True),  # cast to Double in Silver
+    ]),
+}
+ 
+def get_schema(table_name: str) -> StructType:
+    if table_name not in _SCHEMAS:
+        raise KeyError(f"Unknown table: {table_name}")
+    return _SCHEMAS[table_name]
+ 
+def validate_schema(table_name: str, incoming_df) -> None:
+    """Raises RuntimeError if required columns missing or wrong type."""
+    result = compare_schema(table_name, incoming_df)
+    if result["missing_cols"]:
+        raise RuntimeError(f"Schema drift: missing {result['missing_cols']}")
+ 
+print("[schema_manager] Loaded. 14 schemas registered.")
+
+10.4 autoloader
+Builds source paths and checkpoint paths. Returns streaming DataFrame (Auto Loader) for incremental fact loads, or batch DataFrame for dimension full refreshes.
+# /Shared/pet-analytics/bronze/autoloader
+ 
+def build_source_path(table_name: str, table_type: str) -> str:
+    # Dimensions: flat file at root
+    if table_type == "dimension":
+        return abfss("raw", f"{table_name}.json")
+    # Facts: partitioned folder — Auto Loader walks all year=/month=/day=/
+    return abfss("raw", f"{table_name}/")
+ 
+def build_checkpoint_path(table_name: str) -> str:
+    return abfss("checkpoints", f"bronze/{table_name}/")
+ 
+def read_stream(table_name: str, table_type: str, schema) -> object:
+    """Auto Loader streaming read for incremental fact ingestion."""
+    return (spark.readStream
+        .format("cloudFiles")
+        .option("cloudFiles.format",           "json")
+        .option("cloudFiles.schemaLocation",   abfss("checkpoints", f"schemas/{table_name}/"))
+        .option("cloudFiles.inferColumnTypes", "false")  # use our explicit schema
+        .option("multiLine",                   "true")
+        .option("recursiveFileLookup",          "true")  # walk year=/month=/day=/
+        .schema(schema)
+        .load(build_source_path(table_name, table_type))
+    )
+ 
+# NOTE: cloudFiles.schemaEvolutionMode = addNewColumns was removed.
+# It is incompatible with explicit .schema() on DBR 13.3.
+# schema_manager handles evolution via validate_schema() instead.
+ 
+def read_batch(table_name, table_type, schema, load_date=None):
+    """Batch read for dimensions or specific date partition."""
+    if table_type == "dimension":
+        source_path = build_source_path(table_name, table_type)
+    elif load_date:
+        y, m, d = load_date.split("-")
+        source_path = abfss("raw", f"{table_name}/year={y}/month={m}/day={d}/")
+        # Guard: return empty DataFrame if partition does not exist
+        try:
+            dbutils.fs.ls(source_path)
+        except:
+            print(f"[autoloader] No partition for {table_name} on {load_date} — skipping")
+            return spark.createDataFrame([], schema)
+    return spark.read.option("multiLine","true").option("recursiveFileLookup","true")
+           .schema(schema).json(source_path)
+ 
+print("[autoloader] Loaded.")
+
+10.5 lineage
+Injects exactly 6 audit columns into every Bronze row. The _source_file column is particularly important — it records the exact ADLS path the row came from, enabling partition-level traceability.
+# /Shared/pet-analytics/bronze/lineage
+ 
+from pyspark.sql.functions import current_timestamp, input_file_name, lit
+ 
+def add_lineage_columns(df, table_name: str, load_date: str, table_type: str):
+    return (df
+        .withColumn("_bronze_load_timestamp", current_timestamp())
+        .withColumn("_source_file",           input_file_name())
+        # input_file_name() for fact rows resolves to e.g.:
+        # abfss://raw@petiot.../device_snapshots/year=2025/month=01/day=03/device_snapshots.json
+        .withColumn("_load_date",             lit(load_date))
+        .withColumn("_table_name",            lit(table_name))
+        .withColumn("_table_type",            lit(table_type))
+        .withColumn("_is_quarantined",        lit(False))
+    )
+ 
+print("[lineage] Loaded. Columns:", ["_bronze_load_timestamp","_source_file",
+       "_load_date","_table_name","_table_type","_is_quarantined"])
+
+10.6 writer
+Handles all Delta writes. writeStream for fact tables (Auto Loader trigger availableNow=True), write.format("delta") for dimension full overwrites.
+# /Shared/pet-analytics/bronze/writer
+ 
+def write_stream(df, table_name: str, checkpoint_path: str) -> None:
+    """Streaming write — processes all queued files then stops (availableNow=True)."""
+    bronze_path = abfss("bronze", table_name)
+    (df.writeStream
+       .format("delta")
+       .outputMode("append")
+       .option("checkpointLocation", checkpoint_path)
+       .option("mergeSchema", "true")
+       .trigger(availableNow=True)  # processes queue then terminates
+       .start(bronze_path)
+       .awaitTermination())
+ 
+def write_batch(df, table_name: str) -> None:
+    """Full overwrite for dimension tables."""
+    bronze_path = abfss("bronze", table_name)
+    (df.write.format("delta").mode("overwrite")
+       .option("overwriteSchema", "true").save(bronze_path))
+ 
+def get_bronze_row_count(table_name: str) -> int:
+    return spark.read.format("delta").load(abfss("bronze", table_name)).count()
+ 
+print("[writer] Loaded.")
+
+10.7 nb_raw_to_bronze (Orchestrator)
+The master Bronze notebook. Receives ADF parameters via dbutils.widgets, calls the four specialist notebooks via %run, orchestrates the flow. Contains zero business logic.
+# /Shared/pet-analytics/bronze/nb_raw_to_bronze
+ 
+# CELL 1: Widgets (receive ADF parameters)
+dbutils.widgets.removeAll()
+dbutils.widgets.text("table_name",      "device_snapshots")
+dbutils.widgets.text("table_type",      "fact")
+dbutils.widgets.text("load_date",       "2025-01-01")
+dbutils.widgets.text("storage_account", "petiot")
+dbutils.widgets.text("is_incremental",  "true")
+ 
+TABLE_NAME     = dbutils.widgets.get("table_name")
+TABLE_TYPE     = dbutils.widgets.get("table_type")
+LOAD_DATE      = dbutils.widgets.get("load_date")
+IS_INCREMENTAL = dbutils.widgets.get("is_incremental").lower() == "true"
+ 
+# CELL 2: Auth
+%run /Workspace/Shared/pet-analytics/shared/set_auth_context
+ 
+# CELL 3: Load specialists
+%run /Workspace/Shared/pet-analytics/bronze/schema_manager
+%run /Workspace/Shared/pet-analytics/bronze/autoloader
+%run /Workspace/Shared/pet-analytics/bronze/lineage
+%run /Workspace/Shared/pet-analytics/bronze/writer
+ 
+# CELL 4: Get schema
+schema = get_schema(TABLE_NAME)
+ 
+# CELL 5: Read
+if TABLE_TYPE == "fact" and IS_INCREMENTAL:
+    checkpoint_path = build_checkpoint_path(TABLE_NAME)
+    df = read_stream(TABLE_NAME, TABLE_TYPE, schema)
+else:
+    df = read_batch(TABLE_NAME, TABLE_TYPE, schema, LOAD_DATE)
+ 
+# CELL 6: Validate schema
+validate_schema(TABLE_NAME, df)
+ 
+# CELL 7: Add lineage
+df = add_lineage_columns(df, TABLE_NAME, LOAD_DATE, TABLE_TYPE)
+ 
+# CELL 8: Write
+if TABLE_TYPE == "fact" and IS_INCREMENTAL:
+    write_stream(df, TABLE_NAME, checkpoint_path)
+else:
+    write_batch(df, TABLE_NAME)
+ 
+# CELL 9: Confirm
+row_count = get_bronze_row_count(TABLE_NAME)
+print(f"Bronze complete: {TABLE_NAME} | {row_count:,} rows")
+dbutils.notebook.exit(f"SUCCESS|{TABLE_NAME}|{row_count}")
+  11. Silver Layer Notebooks
+11.1 Design Philosophy
+Silver applies exactly the same single-responsibility modular pattern as Bronze. silver_reader owns all Bronze reads and incremental filtering. cleaner owns all data quality fixes and type casting. silver_writer owns the Delta MERGE/overwrite. nb_bronze_to_silver orchestrates them.
+
+11.2 silver_reader
+Reads Bronze Delta. For incremental fact loads, filters using the _load_date lineage column injected by Bronze — this is simpler than a separate watermark table and avoids write contention.
+# /Shared/pet-analytics/silver/silver_reader
+ 
+from pyspark.sql.functions import col
+ 
+def read_bronze(table_name, table_type, load_date, is_incremental):
+    bronze_path = abfss("bronze", table_name)
+    df = spark.read.format("delta").load(bronze_path)
+ 
+    if table_type == "fact" and is_incremental:
+        # Filter to only today's window using Bronze lineage column
+        df = df.filter(col("_load_date") == load_date)
+        print(f"[silver_reader] Filtered to _load_date = {load_date}")
+ 
+    print(f"[silver_reader] Rows read: {df.count():,}")
+    return df
+ 
+def drop_lineage_columns(df):
+    """Remove Bronze audit columns before Silver write."""
+    lineage_cols = ["_bronze_load_timestamp","_source_file","_load_date",
+                    "_table_name","_table_type","_is_quarantined"]
+    existing = [c for c in lineage_cols if c in df.columns]
+    return df.drop(*existing)
+
+11.3 cleaner
+The largest Silver notebook. Contains one private cleaning function per table, all routed through a single clean() dispatch function. Anomaly fixes and type casting happen in one place per table.
+# /Shared/pet-analytics/silver/cleaner
+# (showing device_snapshots and sales as representative examples)
+ 
+from pyspark.sql.functions import col, when, abs, lit, to_timestamp, to_date, lpad
+from pyspark.sql.types import DoubleType, IntegerType, BooleanType
+ 
+def clean(df, table_name: str):
+    """Main dispatch — routes to table-specific cleaner."""
+    return _dispatch[table_name](df)
+ 
+def _clean_sales(df):
+    return (df
+        .withColumn("sale_date",        to_date(col("sale_date")))
+        .withColumn("sale_price",       col("sale_price").cast(DoubleType()))
+        .withColumn("discount_amount",  col("discount_amount").cast(DoubleType()))
+        # Fix 1: negative sale_price → null
+        .withColumn("sale_price",
+            when(col("sale_price") < 0, None).otherwise(col("sale_price")))
+        # Fix 2: discount > sale_price → cap at sale_price
+        .withColumn("discount_amount",
+            when(col("discount_amount") > col("sale_price"), col("sale_price"))
+            .otherwise(col("discount_amount")))
+        # Fix 3: NULL or blank sales_channel → Unknown
+        .withColumn("sales_channel",
+            when(col("sales_channel").isNull() | (col("sales_channel") == ""), lit("Unknown"))
+            .otherwise(col("sales_channel")))
+        .dropDuplicates(["sale_id"])
+    )
+ 
+def _clean_device_snapshots(df):
+    return (df
+        .withColumn("snapshot_timestamp", to_timestamp(col("snapshot_timestamp")))
+        .withColumn("battery_pct",        col("battery_pct").cast(DoubleType()))
+        .withColumn("signal_strength",    col("signal_strength").cast(IntegerType()))
+        .withColumn("temperature_c",      col("temperature_c").cast(DoubleType()))
+        # Fix 1: battery out of range
+        .withColumn("battery_pct",
+            when((col("battery_pct") < 0) | (col("battery_pct") > 100), None)
+            .otherwise(col("battery_pct")))
+        # Fix 2: temperature = 0.0 = sensor dropout
+        .withColumn("temperature_c",
+            when(col("temperature_c") == 0.0, None).otherwise(col("temperature_c")))
+        # Fix 3: remove duplicate readings
+        .dropDuplicates(["device_id", "snapshot_timestamp"])
+    )
+ 
+_dispatch = {
+    "owners": _clean_owners, "pets": _clean_pets, "products": _clean_products,
+    "firmware": _clean_firmware, "batches": _clean_batches, "devices": _clean_devices,
+    "sales": _clean_sales, "device_snapshots": _clean_device_snapshots,
+    "activity_snapshots": _clean_activity_snapshots,
+    "health_snapshots": _clean_health_snapshots,
+    "feeding_events": _clean_feeding_events,
+    "hydration_events": _clean_hydration_events,
+    "device_failures": _clean_device_failures,
+    "firmware_deployments": _clean_firmware_deployments,
+}
+
+11.4 silver_writer
+Owns the PK_MAP and decides MERGE vs overwrite. First run always overwrites (DeltaTable.isDeltaTable returns False). Subsequent incremental fact runs MERGE.
+# /Shared/pet-analytics/silver/silver_writer
+ 
+from pyspark.sql.functions import current_timestamp
+from delta.tables import DeltaTable
+ 
+_PK_MAP = {
+    "owners":"owner_id", "pets":"pet_id", "products":"product_id",
+    "firmware":"firmware_id", "batches":"batch_id", "devices":"device_id",
+    "sales":"sale_id",
+    "device_snapshots":["device_id","snapshot_timestamp"],
+    "activity_snapshots":["device_id","snapshot_timestamp"],
+    "health_snapshots":["device_id","snapshot_timestamp"],
+    "feeding_events":"feed_event_id",
+    "hydration_events":"water_event_id",
+    "device_failures":"failure_id",
+    "firmware_deployments":"deployment_id",
+}
+ 
+def write_silver(df, table_name: str, is_incremental: bool) -> int:
+    silver_path = abfss("silver", table_name)
+    pk_cols = _PK_MAP[table_name]
+    pk_list = pk_cols if isinstance(pk_cols, list) else [pk_cols]
+    merge_cond = " AND ".join([f"target.{k} = source.{k}" for k in pk_list])
+ 
+    if is_incremental and DeltaTable.isDeltaTable(spark, silver_path):
+        # MERGE (upsert) — matched rows updated, new rows inserted
+        (DeltaTable.forPath(spark, silver_path).alias("target")
+             .merge(df.alias("source"), merge_cond)
+             .whenMatchedUpdateAll()
+             .whenNotMatchedInsertAll()
+             .execute())
+    else:
+        # Full overwrite on first run or for dimensions
+        (df.write.format("delta").mode("overwrite")
+           .option("overwriteSchema","true").save(silver_path))
+ 
+    return spark.read.format("delta").load(silver_path).count()
+
+11.5 nb_bronze_to_silver (Orchestrator)
+# /Shared/pet-analytics/silver/nb_bronze_to_silver
+ 
+# CELL 1: Widgets
+dbutils.widgets.removeAll()
+dbutils.widgets.text("table_name", "device_snapshots")
+dbutils.widgets.text("table_type", "fact")
+dbutils.widgets.text("load_date",  "2025-01-01")
+dbutils.widgets.text("storage_account", "petiot")
+dbutils.widgets.text("is_incremental",  "true")
+ 
+TABLE_NAME     = dbutils.widgets.get("table_name")
+TABLE_TYPE     = dbutils.widgets.get("table_type")
+LOAD_DATE      = dbutils.widgets.get("load_date")
+IS_INCREMENTAL = dbutils.widgets.get("is_incremental").lower() == "true"
+ 
+# CELL 2: Auth
+%run /Workspace/Shared/pet-analytics/shared/set_auth_context
+ 
+# CELL 3: Load specialists
+%run /Workspace/Shared/pet-analytics/silver/silver_reader
+%run /Workspace/Shared/pet-analytics/silver/cleaner
+%run /Workspace/Shared/pet-analytics/silver/silver_writer
+ 
+# CELL 4: Read Bronze (with incremental filter on _load_date)
+raw_df = read_bronze(TABLE_NAME, TABLE_TYPE, LOAD_DATE, IS_INCREMENTAL)
+ 
+# CELL 5: Drop Bronze lineage columns
+raw_df = drop_lineage_columns(raw_df)
+ 
+# CELL 6: Clean + type cast
+clean_df = clean(raw_df, TABLE_NAME)
+ 
+# CELL 7: Add Silver audit column
+clean_df = add_silver_audit(clean_df)
+ 
+# CELL 8: Write (MERGE or overwrite)
+final_count = write_silver(clean_df, TABLE_NAME, IS_INCREMENTAL)
+ 
+# CELL 9: Exit
+dbutils.notebook.exit(f"SUCCESS|{TABLE_NAME}|{final_count}")
+  12. Gold Layer Notebooks
+12.1 Design Philosophy & Staged Join Strategy
+Gold tables are pre-aggregated for Power BI consumption. The critical design rule is: ALWAYS aggregate fact tables BEFORE joining to dimension tables. Joining a raw 7-million-row fact table to a dimension causes unpredictable row count explosion (fan-out). The staged join pattern avoids this.
+Stage 1: Aggregate each fact table independently
+  activity_snapshots → group by (pet_id, date) → agg_activity (one row per pet per day)
+  health_snapshots   → group by (pet_id, date) → agg_health
+  feeding_events     → group by (pet_id, date) → agg_feeding
+  hydration_events   → group by (pet_id, date) → agg_hydration
+ 
+Stage 2: Full outer join small aggregates to each other
+  agg_activity.join(agg_health, ["pet_id","date"], "full_outer")
+              .join(agg_feeding, ["pet_id","date"], "left")
+              .join(agg_hydration, ["pet_id","date"], "left")
+ 
+  full_outer is critical: a pet with activity data but no hydration on a given day
+  must NOT be dropped. An inner join would silently lose entire days.
+ 
+Stage 3: Enrich with slim dimension joins
+  .join(pets_slim, "pet_id", "left")    # add pet_name, species
+  .join(owners_slim, "owner_id", "left") # add owner_name, city, country
+
+12.2 gold_reader
+Reads Silver Delta tables with minimal column selection to reduce shuffle data across joins.
+# /Shared/pet-analytics/gold/gold_reader
+ 
+def _silver(table_name): return spark.read.format("delta").load(abfss("silver", table_name))
+ 
+# Dimension readers — select only columns needed in Gold
+def read_owners():   return _silver("owners").select("owner_id","owner_name","city","state","country")
+def read_pets():     return _silver("pets").select("pet_id","owner_id","pet_name","species","breed")
+def read_products(): return _silver("products").select("product_id","product_name","device_category","msrp")
+def read_batches():  return _silver("batches").select("batch_id","factory_name","factory_location","production_date")
+def read_devices():  return _silver("devices").select("device_id","pet_id","product_id","batch_id","purchase_date","warranty_end_date")
+ 
+# Fact readers
+def read_activity_snapshots(): return _silver("activity_snapshots").select("device_id","pet_id","snapshot_timestamp","steps","distance_km","active_minutes")
+def read_health_snapshots():   return _silver("health_snapshots").select("device_id","pet_id","snapshot_timestamp","heart_rate","pulse_rate","body_temperature")
+def read_feeding_events():     return _silver("feeding_events").select("device_id","pet_id","event_timestamp","food_dispensed_grams")
+def read_hydration_events():   return _silver("hydration_events").select("device_id","pet_id","event_timestamp","water_consumed_ml")
+def read_device_snapshots():   return _silver("device_snapshots").select("device_id","snapshot_timestamp","battery_pct","signal_strength","temperature_c")
+def read_device_failures():    return _silver("device_failures").select("device_id","failure_id","failure_timestamp","failure_type","downtime_minutes","severity_score")
+def read_firmware_deployments(): return _silver("firmware_deployments").select("device_id","deployment_id","deployment_status","rollback_flag","deployment_duration_seconds")
+def read_sales():              return _silver("sales").select("sale_id","device_id","owner_id","sale_date","sale_price","discount_amount","sales_channel","city","state")
+
+12.3 aggregator
+All groupBy and agg logic lives here. Organised by domain audience.
+# /Shared/pet-analytics/gold/aggregator
+ 
+from pyspark.sql.functions import col, sum, avg, max, min, count, when, round as R, to_date
+ 
+# ── Pet Owner aggregations ────────────────────────────────
+def agg_activity_daily(df):
+    return (df.withColumn("date", to_date(col("snapshot_timestamp")))
+              .groupBy("pet_id","date")
+              .agg(sum("steps").alias("total_steps"),
+                   sum("distance_km").alias("total_distance_km"),
+                   sum("active_minutes").alias("total_active_minutes")))
+ 
+def agg_health_daily(df):
+    return (df.withColumn("date", to_date(col("snapshot_timestamp")))
+              .groupBy("pet_id","date")
+              .agg(R(avg("heart_rate"),2).alias("avg_heart_rate"),
+                   R(avg("body_temperature"),2).alias("avg_body_temperature"),
+                   max("heart_rate").alias("max_heart_rate"),
+                   min("heart_rate").alias("min_heart_rate"),
+                   sum(when((col("heart_rate").isNull())|(col("body_temperature")>41.5),1).otherwise(0)).alias("health_alert_count"))
+              .withColumn("has_health_alert", when(col("health_alert_count")>0, True).otherwise(False)))
+ 
+# ── Manufacturer aggregations ─────────────────────────────
+def agg_failures_by_device(df):
+    return (df.groupBy("device_id")
+              .agg(count("failure_id").alias("total_failures"),
+                   R(avg("severity_score"),2).alias("avg_severity_score"),
+                   sum("downtime_minutes").alias("total_downtime_minutes"),
+                   when(count("failure_id")>5, True).otherwise(False).alias("is_crash_prone")))
+ 
+def agg_firmware_by_device(df):
+    return (df.groupBy("device_id")
+              .agg(count("deployment_id").alias("total_deployments"),
+                   sum(when(col("deployment_status")=="Success",1).otherwise(0)).alias("successful_deployments"),
+                   sum(when(col("rollback_flag")==True,1).otherwise(0)).alias("total_rollbacks"))
+              .withColumn("fw_success_rate_pct",
+                   R(col("successful_deployments")/col("total_deployments")*100,1)))
+ 
+# ── Sales aggregation ─────────────────────────────────────
+def agg_sales_summary(df):
+    return (df.groupBy("sale_month","sales_channel","device_category","country","state")
+              .agg(count("sale_id").alias("total_units_sold"),
+                   R(sum("sale_price"),2).alias("gross_revenue"),
+                   R(sum("net_revenue"),2).alias("net_revenue"),
+                   R(sum("discount_amount"),2).alias("total_discounts"),
+                   R(sum("discount_amount")/sum("sale_price")*100,1).alias("discount_rate_pct")))
+
+12.4 gold_writer
+Writes managed Unity Catalog tables using saveAsTable(). Always overwrites. Applies null defaults via coalesce for additive metrics. Vital sign nulls (heart_rate, temperature) are preserved — NULL means the pet has no health monitor device, which is meaningful.
+# /Shared/pet-analytics/gold/gold_writer
+ 
+from pyspark.sql.functions import current_timestamp, coalesce, lit
+ 
+def write_gold(df, gold_table_name: str) -> int:
+    full_table = f"petiot_dbx_dev.gold.{gold_table_name}"
+    (df.write
+       .format("delta")
+       .mode("overwrite")
+       .option("overwriteSchema", "true")
+       .option("mergeSchema",     "true")
+       .saveAsTable(full_table))
+    return spark.table(full_table).count()
+ 
+def apply_null_defaults(df, gold_table_name):
+    """Coalesce additive metrics to 0. Keep vital signs as NULL."""
+    fill_map = {
+        "gold_pet_owner_daily_summary": {
+            "total_steps":0, "total_distance_km":0.0,
+            "total_active_minutes":0, "health_alert_count":0,
+            "total_food_grams":0.0, "total_feed_sessions":0,
+            "total_water_ml":0.0, "total_drink_sessions":0,
+            # avg_heart_rate, avg_body_temperature LEFT AS NULL
+        },
+    }
+    for col_name, default in fill_map.get(gold_table_name, {}).items():
+        if col_name in df.columns:
+            df = df.withColumn(col_name, coalesce(df[col_name], lit(default)))
+    return df
+
+12.5 nb_silver_to_gold_pet_owners
+# /Shared/pet-analytics/gold/nb_silver_to_gold_pet_owners
+ 
+%run /Workspace/Shared/pet-analytics/shared/set_auth_context
+%run /Workspace/Shared/pet-analytics/gold/gold_reader
+%run /Workspace/Shared/pet-analytics/gold/aggregator
+%run /Workspace/Shared/pet-analytics/gold/gold_writer
+ 
+# STAGE 1: Read and aggregate each fact table independently
+agg_act  = agg_activity_daily(read_activity_snapshots())
+agg_hlth = agg_health_daily(read_health_snapshots())
+agg_feed = agg_feeding_daily(read_feeding_events())
+agg_hyd  = agg_hydration_daily(read_hydration_events())
+ 
+# STAGE 2: Full outer join all aggregates (same grain: pet_id × date)
+fact_summary = (agg_act
+    .join(agg_hlth, ["pet_id","date"], "full_outer")
+    .join(agg_feed, ["pet_id","date"], "left")
+    .join(agg_hyd,  ["pet_id","date"], "left"))
+ 
+# STAGE 3: Enrich with dimensions (slim joins after aggregation)
+gold_df = (fact_summary
+    .join(read_pets(),   "pet_id",   "left")
+    .join(read_owners(), "owner_id", "left")
+    .withColumn("activity_level",
+        when(col("total_steps")>=5000,"High")
+        .when(col("total_steps")>=2000,"Medium")
+        .otherwise("Low")))
+ 
+# Apply null defaults and write
+gold_df = apply_null_defaults(gold_df, "gold_pet_owner_daily_summary")
+gold_df = add_gold_audit(gold_df)
+count   = write_gold(gold_df, "gold_pet_owner_daily_summary")
+dbutils.notebook.exit(f"SUCCESS|gold_pet_owner_daily_summary|{count}")
+
+12.6 nb_silver_to_gold_manufacturers
+Aggregates device_failures, firmware_deployments, and device_snapshots per device_id (lifetime summary), then enriches with devices, batches, products.
+# Key aggregation steps:
+ 
+# STAGE 1: Aggregate independently (grain = device_id)
+agg_fail = agg_failures_by_device(read_device_failures())
+agg_fw   = agg_firmware_by_device(read_firmware_deployments())
+agg_snap = agg_device_health(read_device_snapshots())
+ 
+# STAGE 2: Full outer join (a device may have no failures yet)
+fact_summary = (agg_fail.join(agg_fw,"device_id","full_outer")
+                        .join(agg_snap,"device_id","left"))
+ 
+# STAGE 3: Enrich with dimensions
+gold_df = (fact_summary
+    .join(read_devices(),  "device_id",  "left")
+    .join(read_batches(),  "batch_id",   "left")
+    .join(read_products(), "product_id", "left")
+    .withColumn("warranty_status",
+        when(col("warranty_end_date")>=current_date(),"Active").otherwise("Expired"))
+    .withColumn("days_since_purchase",
+        datediff(current_date(), col("purchase_date"))))
+
+12.7 nb_silver_to_gold_sales
+Sales is unique: the fact table is small (10,000 rows) so dimension joins happen before aggregation. This is safe because sales.device_id is unique — no fan-out risk.
+# Sales: enrich first (safe because sale_id is unique), then aggregate
+ 
+sales_enriched = (read_sales()
+    .join(read_devices().select("device_id","product_id"), "device_id", "left")
+    .join(read_products().select("product_id","device_category","product_name"), "product_id", "left")
+    .join(read_owners().drop("city","state"), "owner_id", "left")
+    .withColumn("sale_month", date_trunc("month", col("sale_date")).cast("date"))
+    .withColumn("net_revenue", R(col("sale_price")-col("discount_amount"),2)))
+ 
+gold_df = agg_sales_summary(sales_enriched)
+ 
+ 
+ 
+
+  
+13. Audit Framework
+13.1 Audit Design
+Three Delta tables in the audit/ container capture pipeline-level, table-level, and data-quality-level events. Every orchestrator notebook is integrated with exactly 4 new lines — 2 at the top (start logging) and 2 at the bottom (end logging). No existing notebook logic is modified.
+Delta Table	Grain	Key Columns
+audit/pipeline_runs	One row per pipeline execution	run_id, pipeline_name, status, start_time, end_time, duration_seconds, load_date
+audit/table_runs	One row per table per layer per run	run_id, table_name, layer, status, input_rows, output_rows, rows_dropped, duration_seconds
+audit/data_quality	One row per fact table per Silver run	run_id, table_name, null_rows_found, duplicate_rows_found, out_of_range_rows_found, anomaly_rate_pct, dq_status
+
+13.2 audit_manager
+# /Shared/pet-analytics/shared/audit_manager
+ 
+import uuid, time
+from datetime import datetime
+ 
+def generate_run_id(load_date: str) -> str:
+    return f"RUN-{load_date}-{str(uuid.uuid4())[:6]}"
+ 
+def log_pipeline_start(run_id, pipeline_name, load_date, triggered_by="ADF") -> float:
+    start_time = time.time()
+    write_pipeline_run(Row(run_id=run_id, pipeline_name=pipeline_name,
+        pipeline_status="RUNNING", start_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        end_time=None, duration_seconds=None, load_date=load_date,
+        triggered_by=triggered_by, error_message=None))
+    return start_time
+ 
+def log_pipeline_end(run_id, pipeline_name, load_date, start_time,
+                     status="SUCCESS", error_message=None):
+    duration = int(time.time() - start_time)
+    write_pipeline_run(Row(run_id=run_id, pipeline_name=pipeline_name,
+        pipeline_status=status, start_time=None,
+        end_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        duration_seconds=duration, load_date=load_date,
+        triggered_by="ADF", error_message=error_message))
+
+13.3 dq_profiler
+Called only from nb_bronze_to_silver. Compares raw Bronze DataFrame against cleaned Silver DataFrame to compute anomaly statistics.
+# /Shared/pet-analytics/shared/dq_profiler
+ 
+def profile_dataframe(raw_df, clean_df, table_name, run_id, load_date) -> dict:
+    total_input   = raw_df.count()
+    null_count    = _count_nulls(raw_df)
+    dup_count     = _count_duplicates(raw_df, table_name)
+    oor_count     = _count_out_of_range(raw_df, table_name)
+    total_anomalies = null_count + dup_count + oor_count
+    clean_count   = clean_df.count()
+    anomaly_rate  = round(total_anomalies/total_input*100, 2) if total_input > 0 else 0.0
+ 
+    # DQ status thresholds
+    if clean_count == 0:          dq_status = "FAILED"
+    elif anomaly_rate > 10.0:     dq_status = "WARNING"
+    elif (total_input-clean_count)/max(total_input,1) > 0.20: dq_status = "WARNING"
+    else:                         dq_status = "PASSED"
+ 
+    write_dq_run(Row(run_id=run_id, table_name=table_name, load_date=load_date,
+        total_input_rows=total_input, null_rows_found=null_count,
+        duplicate_rows_found=dup_count, out_of_range_rows_found=oor_count,
+        total_anomalies_fixed=total_anomalies, clean_rows_written=clean_count,
+        anomaly_rate_pct=anomaly_rate, dq_status=dq_status))
+    return {"dq_status":dq_status,"anomaly_rate_pct":anomaly_rate}
+
+13.4 audit_writer
+# /Shared/pet-analytics/shared/audit_writer
+ 
+AUDIT_BASE = "abfss://audit@petiot.dfs.core.windows.net"
+ 
+def _write_row(row, path):
+    spark.createDataFrame([row]).write.format("delta")
+         .mode("append").option("mergeSchema","true").save(path)
+ 
+def write_pipeline_run(row): _write_row(row, f"{AUDIT_BASE}/pipeline_runs")
+def write_table_run(row):    _write_row(row, f"{AUDIT_BASE}/table_runs")
+def write_dq_run(row):       _write_row(row, f"{AUDIT_BASE}/data_quality")
+
+13.5 nb_audit_query — 9 Pre-Built Queries
+Query	Purpose	What it detects
+Query 1	Last run status all tables	TABLE per layer — quick health check
+Query 2	Row count comparison Bronze vs Silver vs Gold	Missing rows between layers
+Query 3	Unexpected row drops > 20%	Data loss incidents
+Query 4	DQ anomaly rates sorted worst first	Which tables have most quality issues
+Query 5	Gold regression — today vs previous run (LAG function)	Gold table shrinkage
+Query 6	All FAILED/WARNING runs last 7 days	Recent incident summary
+Query 7	Avg pipeline duration by table	Performance trending
+Query 8	Silver rows = 0 (upstream data gap)	Missing source partitions
+Query 9	Full audit trail for one run_id	Per-run forensics
+
+ 
+  14. Power BI Dashboards
+14.1 Connection to Unity Catalog
+6.	Power BI Desktop → Home → Get Data → Azure Databricks
+7.	Server hostname: adb-7405607363756765.5.azuredatabricks.net
+8.	HTTP Path: from SQL Warehouse petiot-powerbi → Connection details
+9.	Authentication: Token (Personal Access Token generated in Databricks User Settings)
+10.	Navigator: expand petiot_dbx_dev → gold → select all 3 Gold tables
+11.	Connection mode: Import (Gold tables are small — fastest rendering)
+
+ 
+
+14.2 DAX Measures
+All DAX measures are created under Modeling → New Measure in Power BI Desktop. Key measures:
+-- Pet Owner measures:
+Pets = DISTINCTCOUNT(gold_pet_owner_daily_summary[pet_id])
+Avg Daily Steps = AVERAGE(gold_pet_owner_daily_summary[total_steps])
+Avg Heart Rate = AVERAGE(gold_pet_owner_daily_summary[avg_heart_rate])
+Alert Day Rate = DIVIDE(
+    SUMX(gold_pet_owner_daily_summary,
+         IF(gold_pet_owner_daily_summary[has_health_alert]=TRUE(),1,0)),
+    COUNTROWS(gold_pet_owner_daily_summary)) * 100
+ 
+-- Manufacturer measures:
+Total Failures = SUM(gold_manufacturer_device_summary[total_failures])
+Avg FW Success % = AVERAGE(gold_manufacturer_device_summary[fw_success_rate_pct])
+Crash Prone Devices = COUNTROWS(FILTER(gold_manufacturer_device_summary,
+    gold_manufacturer_device_summary[is_crash_prone]=TRUE()))
+Total Downtime Hours = DIVIDE(SUM(gold_manufacturer_device_summary[total_downtime_minutes]),60)
+ 
+-- Sales measures:
+Gross Revenue = SUM(gold_sales_summary[gross_revenue])
+Net Revenue = SUM(gold_sales_summary[net_revenue])
+Overall Discount Rate % = DIVIDE(
+    SUM(gold_sales_summary[total_discounts]),
+    SUM(gold_sales_summary[gross_revenue])) * 100
+MoM Revenue Growth % =
+    VAR Current = [Net Revenue]
+    VAR Prev = CALCULATE([Net Revenue], DATEADD(gold_sales_summary[sale_month],-1,MONTH))
+    RETURN DIVIDE(Current - Prev, Prev) * 100
+  
+ 
+ 
+
+14.3 Page 1: Manufacturer Device Quality
+Visual	Type	Fields
+Total Devices	Card	Total Devices measure
+Total Failures	Card	Total Failures measure
+Total Downtime (min)	Card	Total Downtime (min) measure
+Avg FW Success %	Card	Avg FW Success % measure
+Failures by Production Month	Line chart	X: production_date(Month), Y: Total Failures
+Downtime by Production Month	Line chart	X: production_date(Month), Y: Total Downtime
+Failures by Device Category	Clustered bar	Y: device_category, X: Total Failures (sort desc)
+Crash-Prone Device Table	Table	device_id, factory_name, total_failures, fw_success_rate_pct — filter is_crash_prone=TRUE
+Slicers	Dropdown	factory_location, device_category, warranty_status
+
+14.4 Page 2: Sales Overview
+Visual	Type	Fields
+Gross Revenue	Card	Gross Revenue measure
+Net Revenue	Card	Net Revenue measure
+Units Sold	Card	Units Sold measure
+Total Discounts	Card	Total Discounts measure
+Monthly Revenue Trend	Line chart	X: sale_month, Y: Gross Revenue + Net Revenue
+Units Sold by Month	Line chart	X: sale_month, Y: Units Sold
+Revenue by Channel	Column chart	X: sales_channel, Y: Net Revenue
+Revenue by Category	Horizontal bar	Y: device_category, X: Net Revenue (sort desc)
+Geographic Map	Filled map	Location: country, Color saturation: gross_revenue
+Slicers	Dropdown/Date	sale_month, sales_channel, device_category, country
+
+14.5 Page 3: Pet Health
+Visual	Type	Fields
+Pets Monitored	Card	Pets measure
+Avg Daily Steps	Card	Avg Daily Steps measure
+Avg Heart Rate	Card	Avg Heart Rate measure
+Alert Day Rate	Card	Alert Day Rate measure
+Daily Steps Trend	Line chart	X: date, Y: Avg Daily Steps, Legend: pet_name
+Heart Rate Trend	Line chart	X: date, Y: Avg Heart Rate
+Alert Rate by Activity Level	Column chart	X: activity_level, Y: Alert Day Rate
+Active Minutes by Species	Column chart	X: species, Y: Avg Daily Active Minutes
+Pet Health Detail Table	Table	date, owner_name, pet_name, species, activity_level, total_steps, avg_heart_rate, avg_body_temperature, health_alert_count
+Slicers	Dropdown/Date	pet_name, species, date range, activity_level
+
+14.6 Page 4: Daily Pet Detail
+Visual	Type	Fields
+Avg Daily Water (ml)	Card	Avg Daily Water (ml) measure
+Avg Water per Drink Session	Card	Avg Water per Drink Session (ml) measure
+Avg Daily Food (g)	Card	Avg Daily Food (g) measure
+Avg Steps per Active Minute	Card	Avg Steps per Active Minute measure
+Daily Water Trend	Line chart	X: date, Y: Avg Daily Water (ml)
+Daily Food Trend	Line chart	X: date, Y: Avg Daily Food (g)
+Steps by Activity Level	Column chart	X: activity_level, Y: Avg Daily Steps
+Water per Session by Species	Column chart	X: species, Y: Avg Water per Drink Session
+Hydration & Feeding Detail	Table	date, owner_name, pet_name, total_steps, total_food_grams, total_feed_sessions, total_water_ml, total_drink_sessions
+
+14.7 Publishing & Scheduled Refresh
+12.	File → Publish → Publish to Power BI → select workspace "Pet IoT Platform"
+13.	Power BI Service → workspace → dataset → Settings → Data source credentials → edit → enter PAT
+14.	Scheduled refresh → Daily → 06:00 UTC → Apply
+The 06:00 UTC refresh is scheduled after the ADF pipeline (typically completing 02:00–04:00 UTC), ensuring dashboards show the latest Gold data when business users check in the morning.
+ 15. Delta Lake Management
+15.1 OPTIMIZE & ZORDER
+-- Run weekly or after bulk loads on large fact tables
+OPTIMIZE delta.`abfss://silver@petiot.dfs.core.windows.net/device_snapshots`
+ZORDER BY (device_id, snapshot_timestamp);
+ 
+-- ZORDER on device_id makes device-filtered queries 10-100x faster
+-- by co-locating related rows in the same data files.
+
+15.2 VACUUM
+-- Remove files older than 7 days (default retention)
+-- Run weekly to control storage costs
+for layer in ["bronze", "silver", "gold"]:
+    tables = dbutils.fs.ls(f"abfss://{layer}@petiot.dfs.core.windows.net/")
+    for t in tables:
+        spark.sql(f"VACUUM delta.`{t.path}` RETAIN 168 HOURS")
+
+15.3 Time Travel
+-- View version history of Silver sales table
+spark.sql("DESCRIBE HISTORY delta.`abfss://silver@petiot.dfs.core.windows.net/sales`").show()
+ 
+-- Read data as it was yesterday (for audit/reconciliation):
+df = (spark.read.format("delta")
+      .option("timestampAsOf", "2025-01-13 00:00:00")
+      .load("abfss://silver@petiot.dfs.core.windows.net/sales"))
+ 
+-- Restore if a bad run wrote incorrect data:
+spark.sql("""
+    RESTORE TABLE delta.`abfss://silver@petiot.dfs.core.windows.net/sales`
+    TO VERSION AS OF 3
+""")
+
+15.4 Schema Evolution
+# Silver uses MERGE with mergeSchema for safe schema evolution:
+df.write.format("delta")
+   .mode("overwrite")
+   .option("overwriteSchema", "true")   # replaces schema (first run)
+   .save(silver_path)
+ 
+# For append-mode schema changes:
+df.write.format("delta")
+   .mode("append")
+   .option("mergeSchema", "true")       # adds new columns, keeps existing
+   .save(silver_path)
+ 16. Incremental Load Strategy
+16.1 Watermark Pattern
+Rather than maintaining a separate watermark table, the Bronze layer injects a _load_date column into every row via the lineage notebook. Silver reads Bronze and filters: df.filter(col("_load_date") == LOAD_DATE). This uses the ADF-supplied window date as the filter, ensuring each Silver run only processes the Bronze rows written for that specific window — no reprocessing, no skipping.
+Layer	Incremental Strategy	Details
+Raw	Day partitioning	year=/month=/day=/ folder structure — ADF reads only one day's partition
+Bronze	Auto Loader checkpoint	cloudFiles tracks processed files in checkpoints/ container — never re-reads processed files
+Silver	_load_date filter	Each run filters Bronze by _load_date = today's window date
+Gold	Full overwrite	Aggregated from full Silver history each run — no incremental needed
+
+16.2 Auto Loader Checkpoint
+For fact tables, Bronze uses Auto Loader's streaming mode with trigger(availableNow=True). Auto Loader maintains a checkpoint in checkpoints/bronze/{table_name}/ that tracks exactly which raw/ files have been processed. Re-running the notebook for the same table never re-reads already-processed files, making it idempotent.
+
+16.3 Tumbling Window Backfill
+The Tumbling Window trigger with startTime=2021-01-01 automatically generates all historical daily windows. With maxConcurrency=2, ADF runs 2 windows simultaneously. The trigger maintains state — already-succeeded windows are never re-executed, allowing safe stop/start cycles during cluster issues.
+Configuration	Value	Purpose
+startTime	2021-01-01T00:00:00Z	Earliest date across all fact tables (sales, firmware_deployments)
+frequency / interval	Hour / 24	Equivalent to daily cadence
+maxConcurrency	2	Limits simultaneous windows to prevent cluster overload
+retryPolicy	3 retries, 300s interval	Handles transient cluster/network failures automatically
+Parameter binding	@trigger().outputs.windowStartTime	Each window carries its own unique date — enables true backfill
+ 
+ 17. Troubleshooting & Issue Resolution
+17.1 Cluster Driver Crashes Under Concurrent Load
+Symptom: "Cluster driver became unhealthy" / "Could not reach driver" errors in ADF Monitor.
+Root cause: Interactive cluster has a shared driver. With maxConcurrency=5 and ForEach batch count=20, up to 5×14=70 simultaneous notebook executions all compete for the same driver memory, exhausting it.
+Resolution applied:
+15.	Switched ADF Linked Service from "Existing interactive cluster" to "New Job Cluster"
+16.	Set Runtime to 13.3.x-scala2.12 (13.3 LTS required by workspace)
+17.	Set node type to Standard_DS3_v2, 2–8 workers autoscaling
+18.	Reduced trigger maxConcurrency from 5 to 2
+19.	Set ForEach Batch count to 4 (4 tables per window in parallel)
+Outcome: Each notebook execution gets its own isolated driver and worker pool. No shared resource contention. Can safely run 2 × 4 = 8 concurrent notebook sessions.
+
+17.2 External Location Errors
+Symptom: NO_PARENT_EXTERNAL_LOCATION_FOR_PATH when using LOCATION clause in CREATE TABLE.
+Root cause: Unity Catalog's Managed Identity (unity-catalog-access-connector) did not have Storage Blob Data Contributor on the petiot storage account.
+Resolution applied: Used saveAsTable() to write Gold tables as managed Unity Catalog tables in the UC internal storage (dbstoragekdf4e4ai6prxi), bypassing the External Location requirement entirely.
+Optional permanent fix: Add Storage Blob Data Contributor for Access Connector for Azure Databricks Managed Identity in petiot storage IAM, then create External Location.
+
+17.3 Schema Mismatch Errors
+Symptom: AnalysisException: A schema mismatch detected when writing to a Delta table.
+Root cause: A new column was added to the source, or an existing column changed type between runs.
+Resolution: Use .option("overwriteSchema","true") for full overwrites (dimensions, Gold). Use .option("mergeSchema","true") for appends. The Silver MERGE pattern already handles this.
+# Schema evolution resolution:
+df.write.format("delta")
+   .mode("overwrite")
+   .option("overwriteSchema", "true")  # replaces entire schema
+   .save(path)
+
+17.4 Parameter Chain Issues
+Symptom: All pipeline runs process the same static date instead of the trigger window date.
+Root cause: ADF ExecutePipeline activities had hardcoded string values instead of dynamic expressions. In ADF, a parameter must use "Add dynamic content" (lightning bolt icon) to create a {"value":"@expression","type":"Expression"} binding. Simply typing an @expression into a plain text box saves it as a literal string.
+Resolution: Re-entered all three ExecutePipeline parameter bindings using the "Add dynamic content" button, producing the correct JSON:
+"parameters": {
+    "window_start_time": {
+        "value": "@pipeline().parameters.window_start_time",
+        "type": "Expression"   ← this key must be present
+    }
+}
+ 
+# Verification test: manually trigger master pipeline with window_start_time=1999-01-01
+# Check inner notebook activity input — must show 1999-01-01, not any static date.
+
+17.5 Unity Catalog Access Errors
+Symptom: Notebooks fail with "This Delta version is not supported" or "INVALID_PARAMETER_VALUE: Spark version X isn't supported."
+Root cause: Workspace has disabled legacy DBFS and legacy access mode. Any cluster running Runtime below 13.3 LTS is blocked.
+Resolution: Set Databricks Runtime to 13.3.x-scala2.12 in the Job Cluster configuration of the Databricks Linked Service in ADF.
+Symptom: Empty Gold tables after Genie (Databricks AI) created them via CREATE TABLE without LOCATION.
+Root cause: Genie created empty managed table shells with no schema. The Gold writer tried to write via abfss() path instead of saveAsTable() — mismatch between table type and write method.
+Resolution: Drop empty ghost tables, update gold_writer.py to use saveAsTable(f"petiot_dbx_dev.gold.{table_name}") with mergeSchema=true, re-run Gold notebooks.
+ 18. Results & Verification
+18.1 Bronze Verification — All 14 Tables
+Table	Bronze Rows	Columns (incl 6 lineage)	Status
+owners	5,000	14	✓ Succeeded
+pets	10,000	14	✓ Succeeded
+products	16	11	✓ Succeeded
+firmware	54	10	✓ Succeeded
+batches	500	10	✓ Succeeded
+devices	10,000	14	✓ Succeeded
+sales	10,000	15	✓ Succeeded
+device_snapshots	588,000	12	✓ Succeeded
+activity_snapshots	29,400	13	✓ Succeeded
+health_snapshots	11,200	13	✓ Succeeded
+feeding_events	53,978	11	✓ Succeeded
+hydration_events	94,038	11	✓ Succeeded
+device_failures	1,000	12	✓ Succeeded
+firmware_deployments	34,578	13	✓ Succeeded
+ 
+18.2 Silver Verification
+All 14 tables cleaned and written to Silver. Type casting confirmed: StringType at Bronze → correct types at Silver (DoubleType for decimals, IntegerType for integers, TimestampType for timestamps, DateType for dates, BooleanType for boolean).
+# Silver verification query:
+df = spark.read.format("delta").load("abfss://silver@petiot.dfs.core.windows.net/device_snapshots")
+df.printSchema()
+# Expected: snapshot_timestamp: timestamp, battery_pct: double, signal_strength: integer
+ 
+df.filter(col("battery_pct") < 0).count()  # Should be 0 (anomalies fixed)
+df.filter(col("temperature_c") == 0.0).count()  # Should be 0 (dropouts nullified)
+
+18.3 Gold Verification
+-- Unity Catalog verification:
+SELECT "pet_owner"    AS tbl, COUNT(*) AS rows
+FROM petiot_dbx_dev.gold.gold_pet_owner_daily_summary
+UNION ALL
+SELECT "manufacturer", COUNT(*)
+FROM petiot_dbx_dev.gold.gold_manufacturer_device_summary
+UNION ALL
+SELECT "sales",        COUNT(*)
+FROM petiot_dbx_dev.gold.gold_sales_summary;
+ 
+ 
+
+ 
+18.4 Dashboard Verification
+All 4 Power BI dashboard pages load and render correctly from the Unity Catalog Gold tables via the Azure Databricks Import connector. Slicers filter correctly. DAX measures return expected values.
+Check	Result
+Power BI connects to Unity Catalog	✓ Connected via petiot-powerbi SQL Warehouse + PAT
+3 Gold tables visible in Navigator	✓ petiot_dbx_dev.gold.* visible in Power BI navigator
+Import mode loads data	✓ All 3 tables imported into Power BI memory successfully
+DAX measures calculate correctly	✓ Avg Daily Steps, Total Failures, Gross Revenue all verified
+Slicers filter visuals	✓ Species, date range, channel, factory slicers all functional
+Scheduled refresh configured	✓ Daily 06:00 UTC, PAT credential set in Power BI Service
+  
+ 
+
+19. Conclusions & Learnings
+What Was Demonstrated
+•	End-to-end data engineering pipeline from synthetic generation to Power BI dashboards on Microsoft Azure
+•	Medallion Architecture (Raw → Bronze → Silver → Gold) with Delta Lake throughout
+•	Modular, testable notebook architecture with strict single-responsibility separation (20 notebooks, each with one job)
+•	Referential integrity enforced programmatically across 14 tables from generation through all pipeline layers
+•	Incremental load via Tumbling Window trigger, Auto Loader checkpoint, and day-partitioned raw storage
+•	Data quality pipeline: 5% controlled anomaly injection + 24 specific cleaning rules in Silver + DQ audit
+•	Unity Catalog governance with managed Gold tables queryable by Power BI
+•	Audit framework with 3 Delta tables and 9 pre-built query patterns
+
+Key Technical Decisions
+Decision	Outcome
+All-StringType schema at Bronze	Zero Bronze load failures regardless of anomaly injection. Silver owns all type casting.
+cloudFiles.schemaEvolutionMode removed	Resolved incompatibility with explicit schema on DBR 13.3. schema_manager handles evolution.
+saveAsTable vs LOCATION for Gold	Bypassed External Location IAM blocker. Managed UC tables work identically for Power BI.
+Full outer join between fact aggregates	Prevented silent loss of pets with partial device coverage (e.g. has collar but no health monitor)
+availableNow=True for streaming write	Converts Auto Loader stream to batch-like behaviour — processes queue then terminates cleanly
+New Job Cluster in ADF Linked Service	Eliminated driver crash under concurrent load. Each notebook execution gets isolated compute.
+_load_date lineage column for Silver filter	Simpler than watermark table — Bronze injects date, Silver reads it. No write contention.
+
+Learnings
+•	ADF parameter expressions require "Add dynamic content" button, not just typing @expression text in a plain field
+•	Tumbling Window backfill requires startTime set to earliest data date, not today — otherwise historical partitions are never processed
+•	Interactive clusters are not appropriate for unattended ADF pipeline workloads with multiple concurrent executions
+•	Unity Catalog External Location requires explicit IAM role assignment on the target storage account — storage firewall or missing role both silently block it
+•	Power BI Import mode is always preferred for aggregated Gold tables — DirectQuery only needed when tables exceed 1GB or real-time freshness is required
+ Appendix A: Full Table Schemas
+A.1 Primary Key Reference
+Table	Primary Key	Type	Composite
+owners	owner_id	STRING	No
+pets	pet_id	STRING	No
+products	product_id	STRING	No
+firmware	firmware_id	STRING	No
+batches	batch_id	STRING	No
+devices	device_id	STRING	No
+sales	sale_id	STRING	No
+device_snapshots	device_id + snapshot_timestamp	STRING + TIMESTAMP	Yes
+activity_snapshots	device_id + snapshot_timestamp	STRING + TIMESTAMP	Yes
+health_snapshots	device_id + snapshot_timestamp	STRING + TIMESTAMP	Yes
+feeding_events	feed_event_id	STRING	No
+hydration_events	water_event_id	STRING	No
+device_failures	failure_id	STRING	No
+firmware_deployments	deployment_id	STRING	No
+
+A.2 Silver Type Contract
+Column pattern	Silver type	Notes
+*_id, *_name, *_type, *_status	STRING	String identifiers never cast
+*_timestamp	TIMESTAMP	via to_timestamp()
+*_date, birth_date, sale_date, production_date	DATE	via to_date()
+*_pct, *_km, *_kg, *_ml, *_grams, *_cost, *_price, *_amount, *_score (decimal)	DOUBLE	via .cast(DoubleType())
+steps, *_minutes, *_seconds, heart_rate, pulse_rate, signal_strength	INTEGER	via .cast(IntegerType())
+rollback_flag, has_health_alert, is_crash_prone, is_incremental	BOOLEAN	via .cast(BooleanType())
+ Appendix B: Azure Resource Reference
+Resource	Name / Value
+Subscription	Tushit-Dev
+Databricks Workspace URL	https://adb-7405607363756765.5.azuredatabricks.net
+Workspace ID	7405607363756765
+Storage Account	petiot (East US, Standard LRS, HNS enabled)
+UC Storage Account	dbstoragekdf4e4ai6prxi
+ADF Instance	pet-iot-dev-adf
+SQL Warehouse	petiot-powerbi
+Secret Scope	petiot (Key Vault backed)
+Access Connector	unity-catalog-access-connector (System-Assigned MI)
+Unity Catalog	petiot_dbx_dev.gold.*
+ADF Trigger	TRG_Daily_Bronze (Tumbling Window, start 2021-01-01, daily)
+Databricks Notebook Root	/Shared/pet-analytics/
+ Appendix C: ADF Expression Cheat Sheet
+Expression	Context	Result
+@trigger().outputs.windowStartTime	Trigger parameter	ISO 8601 window start e.g. 2025-01-03T00:00:00Z
+@pipeline().parameters.window_start_time	ExecutePipeline/Notebook param	Passes received parameter downstream
+@item().table_name	ForEach inner activity	Current table name e.g. "device_snapshots"
+@item().table_type	ForEach inner activity	"dimension" or "fact"
+@string(item().is_incremental)	Notebook base param	Converts boolean to string for widget
+@formatDateTime(pipeline().parameters.window_start_time,'yyyy-MM-dd')	Notebook base param	Converts ISO timestamp to date string
+@activity("LKP_Get_Table_Metadata").output.value	ForEach items	Array of 14 table config objects from table_list.json
+@concat("raw/",item().table_name,"/")	Dynamic path	Builds container path from table name
+
